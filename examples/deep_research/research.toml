@@ -15,7 +15,7 @@ max_turns = 15
 temperature = 0.5
 tools = ["web_search", "think", "file_write", "memory_store", "memory_search"]
 system_prompt = """You are a deep research assistant. When given a topic:
-1. Search the web for recent, authoritative sources
+1. Search the web for recent, current year, authoritative sources
 2. Store key findings in memory for cross-referencing
 3. Synthesize a comprehensive report with citations
 4. Save the final report to a file
