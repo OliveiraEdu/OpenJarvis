@@ -1,29 +1,33 @@
-# NVIDIA GPU override — use with:
-#   docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.gpu.nvidia.yml up
+# NVIDIA GPU override + lean production deployment (host-managed llama.cpp) —
+# use STANDALONE (do not merge with docker-compose.yml, which is the ollama
+# path):
+#
+#   docker compose -f deploy/docker/docker-compose.gpu.nvidia.yml up -d --build
+#
+# - Builds the lean image (Dockerfile.lean, ~1.5 GB). No CUDA inside the
+#   container: the inference engine runs on the host via llama-server (managed
+#   by scripts/llamaserver.sh), reached at host.docker.internal:8080.
+# - Serves the API + pre-built SPA on :9000 (no vite dev server).
+# - Mounts the host workspace (OPENJARVIS_WORKSPACE_HOST, see .env.example)
+#   at /workspace for agent projects.
+# - The NVIDIA device reservation is kept for parity with the legacy
+#   deployment; nothing in the image links CUDA today.
 
 services:
   jarvis:
     build:
       context: ../..
-      dockerfile: deploy/docker/Dockerfile.gpu
-    volumes:
-      - /proc:/proc:ro
-      - /sys:/sys:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  ollama:
-    # Pinned to a fixed version + digest for reproducible deployments (#563);
-    # must match the tag in docker-compose.yml.
-    image: ollama/ollama:0.30.10@sha256:bfc9c6d53cc6989aa5131a6fde6b162b2802d4d337657f3253b5f69579bddeee
+      dockerfile: deploy/docker/Dockerfile.lean
+    image: openjarvis:lean
+    ports:
+      - "9000:9000"
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - OPENJARVIS_API_KEY=${OPENJARVIS_API_KEY:?OPENJARVIS_API_KEY must be set (see .env.example)}
+      - OPENJARVIS_WORKSPACE=/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - "${OPENJARVIS_WORKSPACE_HOST:?OPENJARVIS_WORKSPACE_HOST must be set (see .env.example)}:/workspace"
     deploy:
       resources:
         reservations:
@@ -31,3 +35,4 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    restart: unless-stopped

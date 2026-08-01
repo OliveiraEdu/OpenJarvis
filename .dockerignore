@@ -1,0 +1,50 @@
+# ── Version control ─────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Build outputs & caches ──────────────────────────────────────
+**/node_modules
+frontend/dist
+rust/target
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.venv
+venv/
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+
+# ── Runtime/local artifacts ─────────────────────────────────────
+logs/
+benchmarks/results
+benchmarks/*.log
+*.log
+*.pid
+
+# ── Secrets & local config (never baked) ────────────────────────
+.env
+*.local
+deploy/docker/.env
+config.toml
+.auth
+.agent
+*.key
+*.pem
+
+# ── Editors / OS ────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# ── Repo content not needed for the image ───────────────────────
+.opencode/
+opencode.jsonc
+desktop/
+docs/
+examples/
+notebooks/
+scripts/notebooks/
