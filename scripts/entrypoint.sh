@@ -108,6 +108,29 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 ok "OpenJarvis initialized with host $LLAMA_HOST_URL and CORS enabled"
 
+# Pin the default model to whatever llama-server actually serves (the id
+# exposed by /v1/models). `jarvis init` writes a generic default (e.g.
+# qwen3.5:2b) that never matches the host engine — without this, every command
+# that relies on the default model fails with "model not found". Auto-adapts
+# if the served model changes; falls back to the deployment model when the
+# endpoint is unreachable.
+MODEL_ID="$(curl -sf -m 5 "$LLAMA_HOST_URL/v1/models" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+MODEL_ID="${MODEL_ID:-Qwen3-8B-Q3_K_M.gguf}"
+if grep -q "default_model" "$CONFIG_FILE"; then
+  sed -i "s|default_model = .*|default_model = \"$MODEL_ID\"|" "$CONFIG_FILE"
+elif grep -q "\[intelligence\]" "$CONFIG_FILE"; then
+  sed -i '/\[intelligence\]/a default_model = "'"$MODEL_ID"'"' "$CONFIG_FILE"
+else
+  printf '\n[intelligence]\ndefault_model = "%s"\n' "$MODEL_ID" >> "$CONFIG_FILE"
+fi
+ok "Default model pinned to $MODEL_ID"
+
+# Doctor-recommended security profile for a personal deployment.
+if ! grep -q "profile =" "$CONFIG_FILE"; then
+  printf '\n[security]\nprofile = "personal"\n' >> "$CONFIG_FILE"
+fi
+
 # ── 3. Establish Fixed Container API Key ─────────────────────────────
 info "Configuring OpenJarvis API Key..."
 API_KEY="${OPENJARVIS_API_KEY:-oj_sk_container_default_key_0000000000000000}"
