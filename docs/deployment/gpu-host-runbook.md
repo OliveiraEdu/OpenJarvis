@@ -108,6 +108,9 @@ Compose creates the container with:
 - `host.docker.internal:host-gateway` so it can reach llama
 - workspace `~/Git/openjarvis-workspace` mounted at `/workspace`
   (configurable via `OPENJARVIS_WORKSPACE_HOST` in `deploy/docker/.env`)
+- persistent Jarvis state `~/.openjarvis` mounted at
+  `/home/openjarvis/.openjarvis` (configurable via `OPENJARVIS_STATE_HOST`) —
+  memory/knowledge DBs, agents, and skills survive `docker compose down`
 - GPU reservation (nvidia runtime)
 
 The container's `scripts/entrypoint.sh` then boots from `/workspace`, waits for
@@ -206,5 +209,6 @@ brings the container up. Order is handled: llama first, container second.
 | `scripts/entrypoint.sh` | Container boot: workspace CWD, backend health, engine retry backoff |
 | `deploy/docker/Dockerfile.lean` | Multi-stage ~600 MB image (no CUDA) |
 | `deploy/docker/docker-compose.gpu.nvidia.yml` | Standalone compose: :9000, host-gateway, workspace mount, GPU |
-| `deploy/docker/.env` / `.env.example` | Workspace host path + API key (gitignored / template) |
+| `deploy/docker/.env` / `.env.example` | Workspace host path + API key + state dir (gitignored / template) |
+| `~/.openjarvis` | Persistent Jarvis state (memory/knowledge DBs, agents, skills) mounted into the container |
 | `~/.config/openjarvis/llamaserver.conf` | Optional llama-server overrides (sourced, may not exist) |

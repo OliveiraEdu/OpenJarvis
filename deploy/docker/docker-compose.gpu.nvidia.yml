@@ -28,6 +28,11 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - "${OPENJARVIS_WORKSPACE_HOST:?OPENJARVIS_WORKSPACE_HOST must be set (see .env.example)}:/workspace"
+      # Persistent Jarvis state (config, memory/knowledge DBs, agents, skills).
+      # Without this the state dir is inside the container image layer and is
+      # wiped on `docker compose down`/rebuild. Mounted over the container
+      # user's $HOME so memory.db / knowledge.db / agents.db survive recreates.
+      - "${OPENJARVIS_STATE_HOST:?OPENJARVIS_STATE_HOST must be set (see .env.example)}:/home/openjarvis/.openjarvis"
     deploy:
       resources:
         reservations:
