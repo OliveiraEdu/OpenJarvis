@@ -15,6 +15,14 @@ with CPU and GPU (NVIDIA CUDA, AMD ROCm) variants.
 
 [:octicons-arrow-right-24: Docker deployment](docker.md)
 
+## GPU host stack (llama-server on host + lean container)
+
+A deployment where the inference engine runs on the host (direct GPU access)
+while the Jarvis API/SPA run in a slim ~600 MB container, managed from the repo
+root via the Makefile (`make boot`).
+
+[:octicons-arrow-right-24: GPU host runbook](gpu-host-runbook.md)
+
 ## systemd (Linux)
 
 Run OpenJarvis as a managed system service on Linux servers.
