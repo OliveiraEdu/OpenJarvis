@@ -150,6 +150,48 @@ overridden by `OPENJARVIS_API_KEY` if you set one).
 - **Workspace:** files created inside `/workspace` appear in
   `~/Git/openjarvis-workspace`, owned by the host user (uid 1001).
 
+### 6. On-demand market research (`scripts/research.sh`)
+
+An autonomous IT-market research analyst that produces a structured, sourced,
+math-consistent markdown report on demand (it is **never** scheduled).
+
+```bash
+./scripts/research.sh "Subject: AI infrastructure market | Scope: global, 2025-2030"
+./scripts/research.sh "Subject: RISC-V CPUs | Scope: Europe, 2024-2028"
+```
+
+The topic string is free-form; include a subject and a scope (region, years,
+segment) for focused results. The agent is **one phase at a time** because the
+deployment model (Qwen3-8B-Q3_K_M, the max that fits the 6 GB GPU at ctx-8192)
+tends to shortcut big open-ended tasks — each phase produces a checked artifact
+and the pipeline fails loudly rather than accepting an empty result:
+
+| Phase | Prompt | Artifact (must appear) | Gate |
+|---|---|---|---|
+| 1 — GATHER | live-web searches + page fetches, facts with source/date/URL saved incrementally | `findings.md` | ≥2 `web_search` calls |
+| 2 — VERIFY | every CAGR/projection/share recomputed with the calculator tool | `numbers.md` | ≥1 `calculator` call + table validator |
+| 3a — REPORT pt 1 | Title / Introduction / Executive Summary / Detailed Analysis written in **sequential chunks** | `report.md` | Intro+ExecSummary+DetailedAnalysis present |
+| 3b — REPORT pt 2 | Conclusions / Sources & References / Confidence Assessment appended | `report.md` | all six sections + ≥1 URL |
+
+Details worth knowing:
+
+- **One phase per agent invocation**, ≤3 attempts each; artifact checks run on
+  the host against the bind-mounted workspace (no docker/make quoting needed).
+- **Large `file_write` calls are forbidden**: a single big write breaks the
+  tool-call JSON grammar and kills the turn (llama.cpp HTTP 500). The template
+  forces chunked writes of ~1500 chars.
+- **`web_search` output is size-capped** (engine patch) so 5+ searches do not
+  blow the 8K context window; use a URL as the query to fetch a page.
+- Each run **propagates the current template `system_prompt`** into the managed
+  agent (agents.db bakes the prompt at creation) and resets `summary_memory` —
+  this is what keeps prompt fixes effective without recreating the agent.
+- Reports land in the container workspace `/workspace/<slug>/` → host
+  `~/Git/openjarvis-workspace/<slug>/`:
+  `findings.md`, `numbers.md`, `report.md`.
+- The final report is structurally verified, but the 8B model is not a senior
+  analyst — **skim the report before publishing** (check the Sources URLs are
+  real and the numbers in `report.md` match `numbers.md`).
+
 ## Shutting down
 
 ```bash
@@ -207,6 +249,7 @@ brings the container up. Order is handled: llama first, container second.
 | `Makefile` | All stack operations (`make boot` …) |
 | `scripts/llamaserver.sh` | Host engine lifecycle + status + config (owner of ctx-8192 flags) |
 | `scripts/entrypoint.sh` | Container boot: workspace CWD, backend health, engine retry backoff |
+| `scripts/research.sh` | On-demand market research pipeline (4 gated phases, see §6) |
 | `deploy/docker/Dockerfile.lean` | Multi-stage ~600 MB image (no CUDA) |
 | `deploy/docker/docker-compose.gpu.nvidia.yml` | Standalone compose: :9000, host-gateway, workspace mount, GPU |
 | `deploy/docker/.env` / `.env.example` | Workspace host path + API key + state dir (gitignored / template) |
