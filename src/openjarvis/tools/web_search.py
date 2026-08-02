@@ -74,7 +74,7 @@ class WebSearchTool(BaseTool):
         return url
 
     @staticmethod
-    def _fetch_url(url: str, max_chars: int = 6000) -> str:
+    def _fetch_url(url: str, max_chars: int = 4000) -> str:
         """Fetch a URL and return extracted text content."""
         import re as _re
 
@@ -119,6 +119,12 @@ class WebSearchTool(BaseTool):
         """Search using DuckDuckGo as fallback."""
         from ddgs import DDGS
 
+        # Bound the total search text: the on-device 8K-context models cannot
+        # keep working after several multi-KB tool results, so keep every
+        # search result compact (snippet-level only).
+        _MAX_SNIPPET = 400
+        _MAX_TOTAL = 2200
+
         ddgs = DDGS()
         raw_results = list(ddgs.text(query, max_results=max_results))
         results = []
@@ -126,9 +132,16 @@ class WebSearchTool(BaseTool):
             title = r.get("title", "Untitled")
             url = r.get("href", "")
             snippet = r.get("body", "")
+            if len(snippet) > _MAX_SNIPPET:
+                snippet = snippet[:_MAX_SNIPPET] + "…"
             results.append(f"### {title}\nSource: {url}\nSummary: {snippet}")
 
         formatted = "\n\n---\n\n".join(results)
+        if len(formatted) > _MAX_TOTAL:
+            formatted = (
+                formatted[:_MAX_TOTAL]
+                + "\n\n[More results truncated — re-search with a more specific query if needed]"
+            )
         return formatted
 
     def execute(self, **params: Any) -> ToolResult:
@@ -171,16 +184,26 @@ class WebSearchTool(BaseTool):
                 include_usage=True,
             )
             results = response.get("results", [])
+            # Keep results compact for on-device 8K-context models.
+            _MAX_SNIPPET = 600
+            _MAX_TOTAL = 2200
             formatted_parts = []
             for r in results:
                 title = r.get("title", "Untitled")
                 url = r.get("url", "")
                 content = r.get("content", "") or r.get("snippet", "")
+                if len(content) > _MAX_SNIPPET:
+                    content = content[:_MAX_SNIPPET] + "…"
                 formatted_parts.append(
                     f"### {title}\nSource: {url}\nSummary: {content}"
                 )
 
             formatted = "\n\n---\n\n".join(formatted_parts)
+            if len(formatted) > _MAX_TOTAL:
+                formatted = (
+                    formatted[:_MAX_TOTAL]
+                    + "\n\n[More results truncated — re-search with a more specific query if needed]"
+                )
             return ToolResult(
                 tool_name="web_search",
                 content=formatted or "No results found.",

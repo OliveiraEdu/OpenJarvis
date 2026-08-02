@@ -465,17 +465,19 @@ class AgentExecutor:
             else:
                 tick_note = f"Previous tick: {first_sentence}"
 
-        if instruction:
-            input_text = f"Current date: {today}\n\nStanding instruction: {instruction}"
-            if tick_note:
-                input_text += f"\n\n{tick_note}"
-        else:
-            base = tick_note or "Continue your assigned task."
-            input_text = f"Current date: {today}\n\n{base}"
         pending = self._manager.get_pending_messages(agent["id"])
         if pending:
-            user_msgs = "\n".join(f"User: {m['content']}" for m in pending)
-            input_text = f"{input_text}\n\nNew instructions:\n{user_msgs}"
+            # Queued/immediate user messages ARE the task itself. Do not wrap
+            # them in the date/tick boilerplate below — small models parrot
+            # "the current date is ..." and stall instead of doing the work.
+            # Keep the standing instruction (if any) as framing only.
+            user_msgs = "\n".join(m["content"] for m in pending)
+            if instruction:
+                input_text = (
+                    f"Standing instruction: {instruction}\n\nUser task:\n{user_msgs}"
+                )
+            else:
+                input_text = user_msgs
             for m in pending:
                 self._manager.mark_message_delivered(m["id"])
             logger.info(
@@ -488,6 +490,15 @@ class AgentExecutor:
                 f"Delivering {len(pending)} message(s)...",
             )
         else:
+            if instruction:
+                input_text = (
+                    f"Current date: {today}\n\nStanding instruction: {instruction}"
+                )
+                if tick_note:
+                    input_text += f"\n\n{tick_note}"
+            else:
+                base = tick_note or "Continue your assigned task."
+                input_text = f"Current date: {today}\n\n{base}"
             logger.info(
                 "Agent %s: no pending messages, running with instruction only",
                 agent["name"],
