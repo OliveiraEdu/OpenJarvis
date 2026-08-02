@@ -38,7 +38,7 @@ class TestWebSearchTool:
 
     def test_execute_no_api_key(self, monkeypatch):
         """When no API key, falls back to DuckDuckGo."""
-        tool = WebSearchTool(api_key=None)
+        tool = WebSearchTool(api_key=None, provider="duckduckgo")
         with patch.dict("os.environ", {}, clear=True):
             tool._api_key = None
             monkeypatch.delitem(sys.modules, "tavily", raising=False)
@@ -80,7 +80,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert result.success is True
         assert "Result 1" in result.content
@@ -110,7 +110,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert result.success is True
         assert result.metadata["engine"] == "duckduckgo"
@@ -140,7 +140,7 @@ class TestWebSearchTool:
         mock_ddgs_module.DDGS.return_value = mock_ddgs
         monkeypatch.setitem(sys.modules, "ddgs", mock_ddgs_module)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert result.success is True
         assert "DDG Result 1" in result.content
@@ -168,7 +168,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key", max_results=3)
+        tool = WebSearchTool(api_key="test-key", max_results=3, provider="tavily")
         tool.execute(query="test", max_results=7)
         mock_client.search.assert_called_once_with(
             "test", max_results=7, search_depth="advanced", include_usage=True
@@ -195,7 +195,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert result.success is True
         assert result.metadata["engine"] == "duckduckgo"
@@ -220,7 +220,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="obscure query")
         assert result.success is True
         assert result.content == "No results found."
@@ -264,7 +264,7 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert result.success is True
         # Labeled structure with the page content surfaced.
@@ -305,9 +305,87 @@ class TestWebSearchTool:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        tool = WebSearchTool(api_key="test-key")
+        tool = WebSearchTool(api_key="test-key", provider="tavily")
         result = tool.execute(query="test query")
         assert "Summary: Fallback snippet text." in result.content
+
+    # ------------------------------------------------------------------
+    # Provider selection (config-driven Tavily enable/disable)
+    # ------------------------------------------------------------------
+
+    def test_default_provider_is_duckduckgo_when_config_unreadable(self, monkeypatch):
+        """A broken config must degrade to the default provider, not crash."""
+        import openjarvis.core.config as cfg_mod
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("config broken")
+
+        monkeypatch.setattr(cfg_mod, "load_config", _boom)
+        assert WebSearchTool()._provider == "duckduckgo"
+
+    def test_provider_resolved_from_config(self, monkeypatch):
+        """provider=None resolves from [tools.web_search] provider=tavily."""
+        import openjarvis.core.config as cfg_mod
+
+        class _FakeWebSearch:
+            provider = "tavily"
+
+        class _FakeTools:
+            web_search = _FakeWebSearch()
+
+        class _FakeConfig:
+            tools = _FakeTools()
+
+        monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: _FakeConfig())
+        assert WebSearchTool()._provider == "tavily"
+
+    def test_unknown_provider_falls_back_to_duckduckgo(self, monkeypatch):
+        """A typo'd provider value must not take search offline."""
+        import openjarvis.core.config as cfg_mod
+
+        class _FakeWebSearch:
+            provider = "some_future_provider"
+
+        class _FakeTools:
+            web_search = _FakeWebSearch()
+
+        class _FakeConfig:
+            tools = _FakeTools()
+
+        monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: _FakeConfig())
+        assert WebSearchTool()._provider == "duckduckgo"
+
+    def test_duckduckgo_provider_never_calls_tavily(self, monkeypatch):
+        """The default provider must never contact Tavily, even with a key."""
+        import builtins
+
+        mock_ddgs = MagicMock()
+        mock_ddgs.text.return_value = [
+            {
+                "title": "DDG Result 1",
+                "href": "https://example.com/1",
+                "body": "Content 1",
+            },
+        ]
+        mock_ddgs_module = MagicMock()
+        mock_ddgs_module.DDGS.return_value = mock_ddgs
+        monkeypatch.setitem(sys.modules, "ddgs", mock_ddgs_module)
+
+        original_import = builtins.__import__
+
+        def _fail_import(name, *args, **kwargs):
+            if name == "tavily":
+                raise AssertionError(
+                    "Tavily must not be imported when provider=duckduckgo"
+                )
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fail_import)
+
+        tool = WebSearchTool(api_key="test-key", provider="duckduckgo")
+        result = tool.execute(query="test query")
+        assert result.success is True
+        assert result.metadata["engine"] == "duckduckgo"
 
 
 # ---------------------------------------------------------------------------

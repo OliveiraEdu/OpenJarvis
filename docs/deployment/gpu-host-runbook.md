@@ -182,6 +182,19 @@ Details worth knowing:
   forces chunked writes of ~1500 chars.
 - **`web_search` output is size-capped** (engine patch) so 5+ searches do not
   blow the 8K context window; use a URL as the query to fetch a page.
+- **Search provider is configurable.** The `web_search` tool uses **DuckDuckGo
+  by default** (free, no API key) and never contacts Tavily unless you opt in.
+  To enable the Tavily API:
+  1. Save a key: `jarvis tools credentials save web_search TAVILY_API_KEY <key>`
+     (or set `TAVILY_API_KEY` in the container env).
+  2. Add to `~/.openjarvis/config.toml`:
+     ```toml
+     [tools.web_search]
+     provider = "tavily"
+     ```
+  3. Restart the stack (`make jarvis-restart`) — provider is read at startup.
+  With Tavily enabled, a missing/expired key or an API error falls back to
+  DuckDuckGo automatically. To disable again, set `provider = "duckduckgo"`.
 - Each run **propagates the current template `system_prompt`** into the managed
   agent (agents.db bakes the prompt at creation) and resets `summary_memory` —
   this is what keeps prompt fixes effective without recreating the agent.
@@ -223,6 +236,7 @@ brings the container up. Order is handled: llama first, container second.
 | Container crash-looping | `make jarvis-logs-follow`. Entrypoint retries ~90 s; if it still fails, llama wasn't up in time. Start order matters: llama first. |
 | Root-owned workspace files | Normal only if you used `jarvis-shell-root`. Use `jarvis-shell` (non-root) for regular work. |
 | Slow first response after boot | Normal-ish: warmup happens on `llama-start`, so first chat should be fast. If you see a 10 s first token, the warmup curl didn't complete — harmless. |
+| `web_search` ignores a Tavily key | Provider defaults to `duckduckgo` — Tavily is opt-in via `[tools.web_search] provider = "tavily"` in `~/.openjarvis/config.toml`, read at server start (restart required). |
 | Unknown `make` target | `make help` lists everything. |
 
 ## Reference

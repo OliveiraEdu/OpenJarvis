@@ -968,12 +968,30 @@ class BrowserConfig:
 
 
 @dataclass(slots=True)
+class WebSearchConfig:
+    """Web search provider settings for the ``web_search`` tool.
+
+    Maps to ``[tools.web_search]`` in config.toml.
+
+    ``provider`` selects the search backend:
+      - ``"duckduckgo"`` (default) — free DuckDuckGo search, no API key.
+        Tavily is never contacted, even if ``TAVILY_API_KEY`` is set.
+      - ``"tavily"`` — Tavily API (requires ``TAVILY_API_KEY`` via env or
+        the credential store). Falls back to DuckDuckGo automatically if
+        the key is missing or the API errors.
+    """
+
+    provider: str = "duckduckgo"  # "duckduckgo" (default) | "tavily"
+
+
+@dataclass(slots=True)
 class ToolsConfig:
     """Tools primitive settings — wraps storage and MCP configuration."""
 
     storage: StorageConfig = field(default_factory=StorageConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     browser: BrowserConfig = field(default_factory=BrowserConfig)
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     enabled: str = ""  # comma-separated default tools
 
 
@@ -2051,6 +2069,15 @@ enabled = true
 # viewport_width = 1280
 # viewport_height = 720
 
+# Web search provider for the web_search tool.
+#   "duckduckgo" (default) — free DuckDuckGo search, no API key. Tavily is
+#       never contacted, even if TAVILY_API_KEY is set.
+#   "tavily" — Tavily API; requires TAVILY_API_KEY (env var or stored via
+#       `jarvis tools credentials save`). Falls back to DuckDuckGo if the
+#       key is missing or the API errors. Restart the server after changing.
+# [tools.web_search]
+# provider = "duckduckgo"
+
 [server]
 host = "0.0.0.0"
 port = 8000
@@ -2235,6 +2262,7 @@ __all__ = [
     "TracesConfig",
     "VLLMEngineConfig",
     "WebChatChannelConfig",
+    "WebSearchConfig",
     "WebhookChannelConfig",
     "WhatsAppBaileysChannelConfig",
     "WhatsAppChannelConfig",
