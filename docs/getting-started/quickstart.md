@@ -135,9 +135,11 @@ cd OpenJarvis
 This launches the backend API server and a React frontend at [http://localhost:5173](http://localhost:5173).
 You get a ChatGPT-like interface with streaming responses, tool use, energy monitoring, and a telemetry dashboard — all running locally on your hardware.
 
-Web search is available through the built-in DuckDuckGo fallback. To use
-Tavily, add `TAVILY_API_KEY` under **Settings → Tools → Web Search** after the
-app starts, or export it before starting quickstart:
+Web search works out of the box through the built-in DuckDuckGo provider
+(no API key). To use Tavily instead, opt in via
+`[tools.web_search] provider = "tavily"` in `config.toml` and add
+`TAVILY_API_KEY` under **Settings → Tools → Web Search** after the app starts,
+or export it before starting quickstart:
 
 ```bash
 export TAVILY_API_KEY="tvly-..."
@@ -272,7 +274,7 @@ Agents add multi-turn reasoning and tool-calling capabilities. The `orchestrator
 | `retrieval` | Search the memory store for relevant context. |
 | `llm` | Make sub-queries to another model. |
 | `file_read` | Read files with path validation. |
-| `web_search` | Web search via the Tavily API (requires `tools-search` extra). |
+| `web_search` | Web search via DuckDuckGo by default; Tavily API optional (`[tools.web_search] provider = "tavily"`, requires `tools-search` extra + `TAVILY_API_KEY`). |
 
 ### CLI Example
 

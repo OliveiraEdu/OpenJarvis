@@ -160,6 +160,6 @@ Smaller chunk sizes work better for code, where each function or class is a natu
 
 **Slow responses** -- The agent makes multiple search passes. Each turn involves a model call. Reduce `max_turns` or use a smaller model (`qwen3.5:4b`) for faster but less thorough results.
 
-**Web search not working** -- The `web_search` tool requires the Tavily API. Install with `uv sync --extra tools-search` and set `TAVILY_API_KEY`.
+**Web search not working** -- `web_search` uses DuckDuckGo by default (no key). If you opted into Tavily via `[tools.web_search] provider = "tavily"`, install with `uv sync --extra tools-search` and set `TAVILY_API_KEY`.
 
 **Wrong chunks retrieved** -- Try re-indexing with different chunk sizes. For technical documents, smaller chunks (`256`) often retrieve more precisely. For narrative text, larger chunks (`1024`) preserve more context.

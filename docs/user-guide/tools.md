@@ -383,6 +383,13 @@ Searches the web and returns a result summary. Useful for queries that need curr
 |-----------|--------|----------|------------------------------------------|
 | `query`   | string | Yes      | Search query string                      |
 
+**Search provider:** The tool searches **DuckDuckGo by default** (free, no API
+key). Tavily is opt-in via `[tools.web_search] provider = "tavily"` in
+`config.toml` (see [Configuration → `[tools.web_search]`](../getting-started/configuration.md)),
+which requires a `TAVILY_API_KEY`. With Tavily enabled, missing keys or API
+errors fall back to DuckDuckGo automatically. Passing a URL as the `query`
+fetches and returns that page's text instead of searching.
+
 ### CodeInterpreter
 
 **Registry key:** `code_interpreter` | **Category:** `code`

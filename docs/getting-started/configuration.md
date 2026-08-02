@@ -406,6 +406,35 @@ enabled = true
 
 ---
 
+### `[tools.web_search]` — Web Search Provider
+
+Controls which backend the `web_search` tool uses.
+
+```toml
+[tools.web_search]
+provider = "duckduckgo"   # "duckduckgo" (default) | "tavily"
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `provider` | string | `"duckduckgo"` | Search backend: `duckduckgo` (free, no API key) or `tavily` (requires `TAVILY_API_KEY`). |
+
+**Provider behavior:**
+
+- `duckduckgo` (default) — free DuckDuckGo search, no API key required. Tavily is
+  **never contacted**, even if `TAVILY_API_KEY` is set.
+- `tavily` — uses the Tavily API. Requires `TAVILY_API_KEY` (env var or stored via
+  `jarvis tools credentials save web_search TAVILY_API_KEY <key>`). Falls back to
+  DuckDuckGo automatically if the key is missing or the API errors.
+- Unknown values degrade to `duckduckgo` with a warning — search is never taken
+  offline by a config mistake.
+
+!!! note
+    The provider is read at server startup — restart (`jarvis serve` / the
+    container) after changing it.
+
+---
+
 ### `[server]` — API Server
 
 Controls the OpenAI-compatible API server started by `jarvis serve`.
