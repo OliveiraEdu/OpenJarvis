@@ -51,6 +51,10 @@ class AgentExecutor:
         self._manager = manager
         self._bus = event_bus
         self._trace_store = trace_store
+        # Per-agent trace enrichment context (final input text, resolved
+        # model, engine) captured by _invoke_agent and consumed by
+        # _save_trace. Keyed by agent_id so concurrent ticks don't race.
+        self._trace_ctx: dict[str, dict[str, Any]] = {}
 
     def set_system(self, system: Any) -> None:
         """Deferred system injection — called after JarvisSystem is constructed."""
@@ -148,7 +152,11 @@ class AgentExecutor:
         self._bus.subscribe(EventType.TOOL_CALL_START, _on_activity)
         self._bus.subscribe(EventType.INFERENCE_START, _on_activity)
 
-        # Trace recording: collect tool call steps
+        # Trace recording: collect tool call + model inference (generate)
+        # steps. Tool events carry the managed-agent UUID and are filtered
+        # by it; inference events carry no agent field, so they are captured
+        # window-scoped (single active tick per process — the same
+        # assumption TraceCollector makes).
         trace_steps: list[dict[str, Any]] = []
 
         def _on_tool_start(event: Any) -> None:
@@ -158,7 +166,7 @@ class AgentExecutor:
                         "type": "tool_call",
                         "input": {
                             "tool": event.data.get("tool"),
-                            "args": event.data.get("args"),
+                            "arguments": event.data.get("arguments"),
                         },
                         "start_time": event.timestamp,
                     }
@@ -170,13 +178,49 @@ class AgentExecutor:
                     if step["type"] == "tool_call" and "output" not in step:
                         step["output"] = {
                             "result": str(event.data.get("result", ""))[:4096],
+                            "success": bool(event.data.get("success", True)),
                         }
-                        step["duration"] = event.data.get("duration", 0)
+                        step["duration"] = event.data.get(
+                            "latency",
+                            event.data.get("duration", 0),
+                        )
                         break
+
+        def _on_inference_start(event: Any) -> None:
+            trace_steps.append(
+                {
+                    "type": "generate",
+                    "input": {
+                        "model": event.data.get("model", ""),
+                    },
+                    "start_time": event.timestamp,
+                }
+            )
+
+        def _on_inference_end(event: Any) -> None:
+            if not trace_steps:
+                return
+            for step in reversed(trace_steps):
+                if step["type"] == "generate" and "output" not in step:
+                    usage = event.data.get("usage", {}) or {}
+                    total_tokens = usage.get("total_tokens", 0) or 0
+                    step["output"] = {
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                        "total_tokens": total_tokens,
+                        "tokens": total_tokens,
+                        "content": str(event.data.get("content", ""))[:4096],
+                        "finish_reason": event.data.get("finish_reason", ""),
+                        "tool_calls": event.data.get("tool_calls", []),
+                    }
+                    step["duration"] = event.timestamp - step["start_time"]
+                    break
 
         if self._trace_store:
             self._bus.subscribe(EventType.TOOL_CALL_START, _on_tool_start)
             self._bus.subscribe(EventType.TOOL_CALL_END, _on_tool_end)
+            self._bus.subscribe(EventType.INFERENCE_START, _on_inference_start)
+            self._bus.subscribe(EventType.INFERENCE_END, _on_inference_end)
 
         tick_start = time.time()
         result = None
@@ -193,6 +237,8 @@ class AgentExecutor:
             if self._trace_store:
                 self._bus.unsubscribe(EventType.TOOL_CALL_START, _on_tool_start)
                 self._bus.unsubscribe(EventType.TOOL_CALL_END, _on_tool_end)
+                self._bus.unsubscribe(EventType.INFERENCE_START, _on_inference_start)
+                self._bus.unsubscribe(EventType.INFERENCE_END, _on_inference_end)
 
             tick_duration = time.time() - tick_start
             self._finalize_tick(agent_id, result, error_info, tick_duration)
@@ -555,6 +601,18 @@ class AgentExecutor:
                 pass  # Don't break agent tick if memory retrieval fails
 
         agent_ctx.memory_results = memory_results
+
+        # Snapshot per-agent trace context: the final input (after memory
+        # context prepend), the resolved model (post router policy) and the
+        # engine id. _save_trace consumes this so traces carry the real
+        # query and model instead of the stale summary_memory / config label.
+        if self._trace_store:
+            self._trace_ctx[agent["id"]] = {
+                "input": input_text[:1000],
+                "model": model,
+                "engine": getattr(engine, "engine_id", "") or type(engine).__name__,
+            }
+
         self._set_activity(agent["id"], "Generating response...")
         logger.info(
             "Agent %s: calling agent.run() with %d chars input",
@@ -772,6 +830,34 @@ class AgentExecutor:
                     timestamp=s.get("start_time", tick_start),
                 )
             )
+        # Append a final RESPOND step so the trace ends with the agent's
+        # answer (mirrors TraceCollector's shape).
+        if result is not None and result.content:
+            steps.append(
+                TraceStep(
+                    step_type=StepType.RESPOND,
+                    timestamp=tick_start + tick_duration,
+                    duration_seconds=0.0,
+                    output={
+                        "content": result.content[:4096],
+                        "turns": getattr(result, "turns", 0),
+                    },
+                )
+            )
+
+        # Enrich from the per-agent context captured by _invoke_agent,
+        # falling back to the old (stale) sources when absent.
+        ctx = self._trace_ctx.pop(agent_id, {})
+        query = (ctx.get("input") or agent.get("summary_memory", ""))[:1000]
+        model = ctx.get("model") or agent.get("config", {}).get("model", "")
+        engine = ctx.get("engine") or ""
+
+        total_tokens = sum(
+            (s.get("output", {}).get("tokens") or 0) for s in trace_steps
+        )
+        if total_tokens == 0 and result is not None:
+            meta = getattr(result, "metadata", None) or {}
+            total_tokens = meta.get("total_tokens") or meta.get("tokens_used") or 0
 
         metadata: dict[str, Any] = {}
         if error is not None:
@@ -780,14 +866,16 @@ class AgentExecutor:
         outcome = "success" if error is None else "error"
         trace = Trace(
             agent=agent_id,
-            query=agent.get("summary_memory", "")[:200],
-            result=result.content[:200] if result else "",
-            model=agent.get("config", {}).get("model", ""),
+            query=query,
+            result=(result.content or "")[:200] if result else "",
+            model=model,
+            engine=engine,
             outcome=outcome,
             steps=steps,
             started_at=tick_start,
             ended_at=tick_start + tick_duration,
             total_latency_seconds=tick_duration,
+            total_tokens=total_tokens,
             metadata=metadata,
         )
         try:

@@ -12,7 +12,7 @@ from openjarvis.traces.store import TraceStore
 
 
 def test_executor_records_trace(tmp_path):
-    """execute_tick records a trace with steps to TraceStore."""
+    """execute_tick records a trace with tool call + respond steps."""
     mgr = AgentManager(str(tmp_path / "agents.db"))
     trace_store = TraceStore(str(tmp_path / "traces.db"))
     bus = EventBus()
@@ -26,7 +26,7 @@ def test_executor_records_trace(tmp_path):
             {
                 "agent": agent_dict["id"],
                 "tool": "web_search",
-                "args": {"query": "test"},
+                "arguments": {"query": "test"},
             },
         )
         bus.publish(
@@ -35,7 +35,8 @@ def test_executor_records_trace(tmp_path):
                 "agent": agent_dict["id"],
                 "tool": "web_search",
                 "result": "search results...",
-                "duration": 0.5,
+                "latency": 0.5,
+                "success": True,
             },
         )
         return AgentResult(content="found it", metadata={"tokens_used": 100})
@@ -47,10 +48,62 @@ def test_executor_records_trace(tmp_path):
     assert len(traces) == 1
     assert traces[0].agent == agent["id"]
     assert traces[0].outcome == "success"
-    assert len(traces[0].steps) == 1
+    assert len(traces[0].steps) == 2  # tool_call + respond
     assert traces[0].steps[0].step_type.value == "tool_call"
     assert traces[0].steps[0].input["tool"] == "web_search"
+    assert traces[0].steps[0].input["arguments"] == {"query": "test"}
+    assert traces[0].steps[0].output["success"] is True
+    assert traces[0].steps[0].duration_seconds == 0.5
+    assert traces[0].steps[1].step_type.value == "respond"
+    assert traces[0].steps[1].output["content"] == "found it"
+    # total_tokens falls back to result.metadata when no generate steps
+    assert traces[0].total_tokens == 100
     assert traces[0].total_latency_seconds > 0
+
+    mgr.close()
+    trace_store.close()
+
+
+def test_executor_records_generate_steps(tmp_path):
+    """execute_tick records INFERENCE_START/END events as generate steps."""
+    mgr = AgentManager(str(tmp_path / "agents.db"))
+    trace_store = TraceStore(str(tmp_path / "traces.db"))
+    bus = EventBus()
+    executor = AgentExecutor(mgr, bus, trace_store=trace_store)
+
+    agent = mgr.create_agent("gen-trace")
+
+    def fake_invoke(agent_dict):
+        bus.publish(EventType.INFERENCE_START, {"model": "qwen3:8b"})
+        bus.publish(
+            EventType.INFERENCE_END,
+            {
+                "model": "qwen3:8b",
+                "usage": {
+                    "prompt_tokens": 512,
+                    "completion_tokens": 128,
+                    "total_tokens": 640,
+                },
+                "content": "draft",
+                "finish_reason": "stop",
+            },
+        )
+        return AgentResult(content="final answer", metadata={"total_tokens": 640})
+
+    with patch.object(executor, "_invoke_agent", side_effect=fake_invoke):
+        executor.execute_tick(agent["id"])
+
+    traces = trace_store.list_traces(agent=agent["id"])
+    assert len(traces) == 1
+    steps = traces[0].steps
+    assert len(steps) == 2  # generate + respond
+    assert steps[0].step_type.value == "generate"
+    assert steps[0].input["model"] == "qwen3:8b"
+    assert steps[0].output["total_tokens"] == 640
+    assert steps[0].output["tokens"] == 640
+    assert steps[0].output["content"] == "draft"
+    assert traces[0].total_tokens == 640
+    assert steps[1].step_type.value == "respond"
 
     mgr.close()
     trace_store.close()

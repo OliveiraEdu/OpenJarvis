@@ -14,6 +14,10 @@
 #   Phase 3 — REPORT:  read findings + numbers, write the full structured
 #                      report to report.md in sequential file_write chunks
 #                      (a single large write breaks the tool-call JSON grammar)
+#   Phase 4 — FEEDBACK: after each successful phase a deterministic quality
+#                      score (retries needed, artifact size) is written as
+#                      feedback on that phase's trace, feeding the
+#                      Trace-Driven Learning loop (Phase B of the TDL work).
 #
 # Each phase is checked for its artifact file (one retry per phase), so a
 # shortcutting model cannot silently return without the deliverable.
@@ -126,8 +130,10 @@ EOF
 # Optional 6th arg: snapshot path — restored (cp) over the artifact before
 # every attempt. Used for append-phases so a failed attempt's appends do not
 # pollute the artifact for the next attempt.
+# Optional 7th arg: feedback keyword — when set, on success a deterministic
+# TDL score is written to the trace that produced the artifact (Phase B).
 run_phase() {
-  local label="$1" prompt="$2" host_artifact="$3" validator="${4:-true}" tool_req="${5:-}" snapshot="${6:-}" attempt=1
+  local label="$1" prompt="$2" host_artifact="$3" validator="${4:-true}" tool_req="${5:-}" snapshot="${6:-}" fb_keyword="${7:-}" attempt=1
   while :; do
     echo ""
     echo "[research] ${label} — attempt ${attempt}..."
@@ -159,6 +165,9 @@ run_phase() {
     rm -f "$asklog"
     if [ "$ok" -eq 0 ]; then
       echo "[research] ${label} OK -> $host_artifact"
+      if [ -n "$fb_keyword" ]; then
+        record_feedback "$label" "$fb_keyword" "$attempt" "$host_artifact"
+      fi
       return 0
     fi
     if [ "$attempt" -ge 3 ]; then
@@ -168,6 +177,63 @@ run_phase() {
     echo "[research] artifact missing, too small, failing validation, or tool gate unmet ($host_artifact); retrying..."
     attempt=$((attempt + 1))
   done
+}
+
+# ── Phase B — deterministic per-phase feedback (Trace-Driven Learning).
+# After a phase succeeds, derive a quality score [0,1] from signals we
+# already collected (retry-free run means the model did not shortcut;
+# artifact size means substance) and write it as feedback on the trace that
+# produced the artifact. Phase A made this possible: the trace's query now
+# carries the phase prompt, so the right trace is located by keyword.
+record_feedback() {
+  local label="$1" keyword="$2" attempts="$3" artifact="$4"
+  local size attempts_bonus size_bonus score agent_uuid
+  size="$(stat -c%s "$artifact" 2>/dev/null || echo 0)"
+  case "$attempts" in
+    1) attempts_bonus=0.2 ;;
+    2) attempts_bonus=0.1 ;;
+    *) attempts_bonus=0.0 ;;
+  esac
+  if [ "$size" -ge 4000 ]; then
+    size_bonus=0.2
+  elif [ "$size" -ge 1500 ]; then
+    size_bonus=0.1
+  else
+    size_bonus=0.0
+  fi
+  # base 0.6 = passed every gate (artifact present + validator + tool gate)
+  score="$(python3 -c "print(f'{min(1.0, 0.6 + $attempts_bonus + $size_bonus):.3f}')")"
+  agent_uuid="$(
+    python3 -c "import sqlite3; print(sqlite3.connect('$STATE_DIR/agents.db').execute(\"select id from managed_agents where name=? and status != 'archived' order by last_run_at desc limit 1\", ('$AGENT_NAME',)).fetchone()[0])" 2>/dev/null || true
+  )"
+  if [ -z "$agent_uuid" ]; then
+    echo "[research] ${label}: agent uuid not found, feedback skipped"
+    return 0
+  fi
+  python3 - "$label" "$keyword" "$score" "$agent_uuid" "$STATE_DIR" <<'PYEOF'
+import sqlite3
+import sys
+
+label, keyword, score, agent_uuid, state_dir = sys.argv[1:]
+db = sqlite3.connect(f"{state_dir}/traces.db", timeout=15)
+row = db.execute(
+    "select trace_id from traces where agent = ? and query like ?"
+    " order by started_at desc limit 1",
+    (agent_uuid, f"%{keyword}%"),
+).fetchone()
+if row:
+    db.execute(
+        "update traces set feedback = ? where trace_id = ?",
+        (float(score), row[0]),
+    )
+    db.commit()
+    print(f"[research] {label}: feedback {score} -> trace {row[0]}")
+else:
+    print(
+        f"[research] {label}: no trace matched keyword '{keyword}', feedback skipped"
+    )
+db.close()
+PYEOF
 }
 
 # Validator: the numbers table must have at least 3 data rows and show at
@@ -209,17 +275,17 @@ check_report_sections() {
 # ── 5. Phase 1 — GATHER (scaffold findings early, append as you go)
 run_phase "phase 1 (gather)" \
   "GATHER FACTS. Topic: ${TOPIC}. Work this way, in order: (1) Run 3-4 web_search queries with different angles (each result is compact; you may pass a URL as the query to fetch a page - clean text extract). NEVER use http_request. (2) AFTER YOUR SECOND SEARCH, immediately create ${FINDINGS} with file_write (path=${FINDINGS}, mode='write', create_dirs=true) containing the facts you have so far — for every fact include: the fact, source name, publication date if known, and URL. (3) Keep searching / fetching, and after each new finding APPEND it to ${FINDINGS} with file_write mode='append' — never mode='write' again (it would erase what you already saved). Include every market-size figure and CAGR figure found, with base year and currency. (4) When done, reply with just 'done' and the path. Do NOT write the final report yet." \
-  "${WORKSPACE_HOST}/${slug}/findings.md" true "web_search:2" || exit 1
+  "${WORKSPACE_HOST}/${slug}/findings.md" true "web_search:2" "" "GATHER FACTS" || exit 1
 
 # ── 6. Phase 2 — VERIFY (math consistency, artifact-enforced)
 run_phase "phase 2 (verify)" \
   "VERIFY THE NUMBERS. Topic: ${TOPIC}. Do this now: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, run the calculation through the calculator tool (e.g. CAGR = ((end/start)^(1/years)-1)*100; projection = start*(1+r)^years). If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) Write the verified figures to ${NUMBERS} using ONE file_write (mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. (4) Reply with just 'done' and the path. Do NOT write the report yet." \
-  "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" || exit 1
+  "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" "" "VERIFY THE NUMBERS" || exit 1
 
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
 run_phase "phase 3a (report part 1)" \
   "WRITE PART 1 OF THE FINAL REPORT. Topic: ${TOPIC}. Do this now, in order: (1) Read ${FINDINGS} and ${NUMBERS} with file_read. (2) Write to ${REPORT} using file_write — CRITICAL: write in SEQUENTIAL CHUNKS because a single large write gets rejected by the tool-call JSON grammar and kills the turn. First call: file_write(path=${REPORT}, mode='write', create_dirs=true, content=# Title + blank line + ## Introduction). Then APPEND with mode='append': ## Executive Summary, then ## Detailed Analysis (split into 2 chunks if needed). Keep EVERY single write under ~1500 characters, and never use mode='write' again after the first call. Start every appended chunk with a blank line before its ## heading so sections do not glue together. (3) NUMBERS MUST MATCH ${NUMBERS}: every CAGR/projection/share must be calculator-verified; if a source's claimed CAGR differs from the computed one print both and flag it; never silently mix figures with different base years. (4) This is PART 1 only: Title, Introduction, Executive Summary, Detailed Analysis. DO NOT write Conclusions, Sources, or Confidence Assessment yet — a later step appends them. (5) Reply with 'part 1 done' and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" || exit 1
+  "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" "" "WRITE PART 1 OF THE FINAL REPORT" || exit 1
 
 # Snapshot part 1 so each part-2 attempt starts from a clean state (a failed
 # attempt's appends must not pollute the next attempt).
@@ -229,7 +295,7 @@ echo "[research] part 1 snapshot saved (report.part1)"
 # ── 8. Phase 3b — REPORT part 2 (append Conclusions..Confidence, chunked)
 run_phase "phase 3b (report part 2)" \
   "WRITE PART 2 OF THE FINAL REPORT, APPENDING to the existing file. Topic: ${TOPIC}. (1) The file ${REPORT} already exists with the Title, Introduction, Executive Summary, and Detailed Analysis sections. Read ${NUMBERS} with file_read if you need the verified figures. (2) APPEND the remaining sections to ${REPORT} with file_write mode='append', one section per call, each write under ~1500 characters, each chunk STARTING WITH A BLANK LINE before its ## heading: ## Conclusions, then ## Sources & References (numbered list with publisher, title, date, URL for every claim), then ## Confidence Assessment (per-section high/medium/low with one-line justification, plus an overall assessment). NEVER use mode='write' — that would erase part 1. (3) When all three sections are appended, reply with a 1-2 paragraph summary of the complete report and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" || exit 1
+  "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" "WRITE PART 2 OF THE FINAL REPORT" || exit 1
 
 rm -f "${WORKSPACE_HOST}/${slug}/report.part1"
 
