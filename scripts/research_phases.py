@@ -144,9 +144,16 @@ class Ctx:
 
 def render_prompt(name: str, vars_: dict[str, str]) -> str:
     """Render a versioned prompt template (C2). Raises on a missing variable
-    or a stray ``$``, so a template edit that breaks rendering fails loudly."""
+    or a stray ``$``, so a template edit that breaks rendering fails loudly.
+
+    The template file's trailing newline is trimmed: the launcher passes the
+    prompt through ``make jarvis-exec CMD="... "`` and make splits recipes on
+    newlines, so a prompt containing one would break the shell quoting
+    ('Unterminated quoted string'). See the regression test in
+    tests/pipeline/test_orchestration.py.
+    """
     raw = (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
-    return string.Template(raw).substitute(vars_)
+    return string.Template(raw).substitute(vars_).strip()
 
 
 def prompt_vars(ctx: Ctx) -> dict[str, str]:

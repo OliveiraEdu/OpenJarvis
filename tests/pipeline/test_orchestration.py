@@ -169,6 +169,17 @@ def test_render_prompt_substitutes_topic_and_container_paths(tmp_path):
             assert f"/workspace/{ctx.slug}/{artifact}" in text
 
 
+def test_rendered_prompt_is_newline_free(tmp_path):
+    """The launcher passes the prompt through ``make jarvis-exec CMD="…"`` and
+    make splits recipes on newlines, so any newline in a rendered prompt breaks
+    the shell quoting (live-run regression: 'Unterminated quoted string' from
+    the template file's trailing newline). render_prompt must trim, and no
+    template may introduce an internal newline."""
+    ctx = make_ctx(tmp_path)
+    for spec in PHASES.values():
+        assert "\n" not in render_prompt(spec.prompt, prompt_vars(ctx))
+
+
 # ── C1: the typed phase specs are self-consistent ────────────────────────────
 
 
