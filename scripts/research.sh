@@ -50,6 +50,12 @@ TEMPLATE_FILE="deploy/templates/${TEMPLATE_ID}.toml"
 STATE_DIR="${OJ_STATE_DIR:-$HOME/.openjarvis}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Deterministic leaf functions (validators, normalize, provenance, gates,
+# banners, feedback scoring) live in research_lib.sh — the SAME code the
+# offline harness in tests/pipeline/ exercises via `bash -c`.
+# shellcheck source=research_lib.sh
+source "${ROOT}/scripts/research_lib.sh"
+
 # Host workspace (same default as deploy/docker/.env.example)
 WORKSPACE_HOST="${OPENJARVIS_WORKSPACE_HOST:-$HOME/Git/openjarvis-workspace}"
 
@@ -174,7 +180,7 @@ run_phase() {
     if [ -n "$tool_req" ]; then
       local req_tool="${tool_req%%:*}" req_min="${tool_req##*:}"
       local n
-      n="$(grep -c "↳ ${req_tool}" "$asklog" 2>/dev/null || true)"
+      n="$(count_tool_calls "$asklog" "$req_tool")"
       if [ "${n:-0}" -lt "$req_min" ]; then
         ok=1
         echo "[research] ${label}: tool-usage gate failed (${n:-0} ${req_tool} call(s) < ${req_min})"
@@ -210,29 +216,11 @@ run_phase() {
 # carries the phase prompt, so the right trace is located by keyword.
 record_feedback() {
   local label="$1" keyword="$2" attempts="$3" artifact="$4" passed="${5:-yes}"
-  local size attempts_bonus size_bonus score agent_uuid
+  local size score agent_uuid
   size="$(stat -c%s "$artifact" 2>/dev/null || echo 0)"
-  case "$attempts" in
-    1) attempts_bonus=0.2 ;;
-    2) attempts_bonus=0.1 ;;
-    *) attempts_bonus=0.0 ;;
-  esac
-  if [ "$size" -ge 4000 ]; then
-    size_bonus=0.2
-  elif [ "$size" -ge 1500 ]; then
-    size_bonus=0.1
-  else
-    size_bonus=0.0
-  fi
-  if [ "$passed" = "no" ]; then
-    # Failed phase: workflow contract violated (e.g. tool gate unmet).
-    # Keep the score low and well below any passing phase, regardless of
-    # artifact size — size alone must never mask a broken workflow.
-    score="$(python3 -c "print(f'{min(0.3, 0.2 + $size_bonus):.3f}')")"
-  else
-    # base 0.6 = passed every gate (artifact present + validator + tool gate)
-    score="$(python3 -c "print(f'{min(1.0, 0.6 + $attempts_bonus + $size_bonus):.3f}')")"
-  fi
+  # Score derivation is pure — feedback_score() in research_lib.sh, tested in
+  # tests/pipeline/test_feedback.py (C3).
+  score="$(feedback_score "$attempts" "$size" "$passed")"
   agent_uuid="$(
     python3 -c "import sqlite3; print(sqlite3.connect('$STATE_DIR/agents.db').execute(\"select id from managed_agents where name=? and status != 'archived' order by last_run_at desc limit 1\", ('$AGENT_NAME',)).fetchone()[0])" 2>/dev/null || true
   )"
@@ -266,99 +254,10 @@ db.close()
 PYEOF
 }
 
-# Validator: the numbers table must have at least 3 data rows and show at
-# least one parenthesized formula (evidence the calculator was really used).
-check_numbers_table() {
-  local f="$1"
-  local rows
-  rows="$(grep -cE '^\|' "$f" 2>/dev/null || true)"
-  [ "${rows:-0}" -ge 3 ] || return 1
-  grep -qE '\([^)]*[0-9][^)]*\)' "$f" || return 1
-  return 0
-}
-
-# Validator: part 1 must contain the first three required sections.
-check_report_part1() {
-  local f="$1"
-  grep -qiE '^#{1,3} *[Ii]ntroduction' "$f" || return 1
-  grep -qiE '^#{1,3} *[Ee]xecutive [Ss]ummary' "$f" || return 1
-  grep -qiE '^#{1,3} *[Dd]etailed [Aa]nalysis' "$f" || return 1
-  return 0
-}
-
-# Validator: the report must contain all six required section headings
-# (title may vary) and at least one source URL. Tolerates heading level and
-# capitalization variants, but a section missing entirely means the report
-# is incomplete and must be retried.
-check_report_sections() {
-  local f="$1"
-  grep -qiE '^#{1,3} *[Ii]ntroduction' "$f" || return 1
-  grep -qiE '^#{1,3} *[Ee]xecutive [Ss]ummary' "$f" || return 1
-  grep -qiE '^#{1,3} *[Dd]etailed [Aa]nalysis' "$f" || return 1
-  grep -qiE '^#{1,3} *[Cc]onclusions' "$f" || return 1
-  grep -qiE '^#{1,3} *[Ss]ources' "$f" || return 1
-  grep -qiE '^#{1,3} *[Cc]onfidence [Aa]ssessment' "$f" || return 1
-  grep -qE 'https?://' "$f" || return 1
-  return 0
-}
-
-# Normalize hook for the report phases: the model sometimes glues a markdown
-# heading to the end of the previous paragraph ("...ARM-based servers.##
-# Sources & References") with no blank line. check_report_sections anchors on
-# line-start headings, so a content-complete report would fail the gate
-# purely over formatting. Insert a blank line before any heading whose whole
-# hash run is glued directly to text; the leading title, already-separated
-# headings, and headings inside code blocks are untouched. Idempotent (safe
-# on every attempt, including retries and the degrade path). NB: the
-# lookbehinds must exclude '#' too — matching at the 2nd+ '#' of a line-start
-# heading would eat a hash and break idempotency.
-fix_glued_headings() {
-  local f="$1"
-  [ -f "$f" ] || return 0
-  python3 - "$f" <<'PYEOF'
-import re
-import sys
-
-p = sys.argv[1]
-with open(p, encoding="utf-8") as fh:
-    text = fh.read()
-fixed = re.sub(r"(?<=.)(?<![#\n])(#{1,6} )(?!#)", r"\n\n\1", text)
-with open(p, "w", encoding="utf-8") as fh:
-    fh.write(fixed)
-PYEOF
-}
-
-# Provenance check (SOFT — never fails the run): every source URL in the
-# report should trace back to findings.md, which only stores URLs returned
-# by web_search. The model tends to fabricate plausible-looking URLs (e.g.
-# .../report-...-123456789.html); any report URL with no match in findings is
-# printed and a caveat is appended to the artifact, so fabrication is visible
-# to the reader instead of silently shipping as a citation.
-check_sources_provenance() {
-  local f="$1"
-  local report_urls findings_urls norm total=0 unmatched=0 url
-  report_urls="$(grep -oE 'https?://[^ )>]+' "$f" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
-  findings_urls="$(grep -oE 'https?://[^ )>]+' "${WORKSPACE_HOST}/${slug}/findings.md" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
-  if [ -z "$report_urls" ]; then
-    echo "[research] provenance: no URLs found in report"
-    return 0
-  fi
-  while IFS= read -r url; do
-    [ -n "$url" ] || continue
-    total=$((total + 1))
-    norm="${url%/}"
-    if ! grep -qF -- "$norm" <<<"$findings_urls"; then
-      unmatched=$((unmatched + 1))
-      echo "[research] provenance: UNMATCHED source URL -> $url"
-    fi
-  done <<<"$report_urls"
-  echo "[research] provenance: ${unmatched}/${total} report URL(s) not found in findings.md"
-  if [ "$unmatched" -gt 0 ]; then
-    printf '\n> **PROVENANCE NOTE** — %s of %s source URL(s) in this report were not found in the gathered findings; they may be fabricated — verify every URL before citing.\n' "$unmatched" "$total" >> "$f"
-    echo "[research] appended provenance caveat to $(basename "$f")"
-  fi
-  return 0
-}
+# Validators, normalize hook (fix_glued_headings), provenance check,
+# tool-gate helper (count_tool_calls), degrade banners, and the feedback
+# score derivation now live in scripts/research_lib.sh (sourced above) —
+# single source of truth, exercised offline by tests/pipeline/.
 
 # ── 5. Phase 1 — GATHER (scaffold findings early, append as you go)
 run_phase "phase 1 (gather)" \
@@ -373,17 +272,8 @@ if ! run_phase "phase 2 (verify)" \
   # work. Prepend an explicit UNVERIFIED banner to numbers.md so the report
   # phases (and the reader) can see the figures were never calculator-checked.
   echo "[research] WARNING: phase 2 (verify) failed after retries — continuing with figures marked UNVERIFIED."
-  numbers_host="${WORKSPACE_HOST}/${slug}/numbers.md"
-  # Build the banner (+ any partial numbers content) and atomically replace
-  # numbers.md. The `[ -f x ] && cat x` idiom short-circuits with exit 1 when
-  # the file is missing, which skipped the mv and orphaned numbers.md.tmp
-  # while leaving NO numbers.md for the report phases — use an explicit if.
-  {
-    printf '> **UNVERIFIED** — figures could not be machine-verified (calculator gate not satisfied); every figure below is model-stated only. Re-run verification before relying on any number.\n\n'
-    if [ -f "$numbers_host" ]; then cat "$numbers_host"; fi
-  } > "${numbers_host}.tmp"
-  mv -f "${numbers_host}.tmp" "$numbers_host"
-  echo "[research] ${numbers_host} marked as UNVERIFIED."
+  mark_numbers_unverified "${WORKSPACE_HOST}/${slug}/numbers.md"
+  echo "[research] ${WORKSPACE_HOST}/${slug}/numbers.md marked as UNVERIFIED."
 fi
 
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
@@ -422,17 +312,10 @@ fi
 # the report. If numbers.md was degraded, prepend the banner to report.md
 # regardless of model compliance so the reader can see the figures are not
 # machine-verified.
-if grep -q '^> \*\*UNVERIFIED\*\*' "${WORKSPACE_HOST}/${slug}/numbers.md" 2>/dev/null \
-   && ! grep -q '^> \*\*UNVERIFIED\*\*' "${WORKSPACE_HOST}/${slug}/report.md" 2>/dev/null; then
-  tmp_banner="$(mktemp)"
-  printf '> **UNVERIFIED** — figures in this report could not be machine-verified; every figure is model-stated only. Re-run verification before relying on any number.\n\n' > "$tmp_banner"
-  cat "${WORKSPACE_HOST}/${slug}/report.md" >> "$tmp_banner"
-  mv -f "$tmp_banner" "${WORKSPACE_HOST}/${slug}/report.md"
-  echo "[research] prepended UNVERIFIED banner to report.md (deterministic)"
-fi
+apply_unverified_banner "${WORKSPACE_HOST}/${slug}/report.md" "${WORKSPACE_HOST}/${slug}/numbers.md"
 
 # ── 10. Provenance note (soft): flag fabricated-looking source URLs.
-check_sources_provenance "${WORKSPACE_HOST}/${slug}/report.md" || true
+check_sources_provenance "${WORKSPACE_HOST}/${slug}/report.md" "${WORKSPACE_HOST}/${slug}/findings.md" || true
 
 rm -f "${WORKSPACE_HOST}/${slug}/report.part1"
 
