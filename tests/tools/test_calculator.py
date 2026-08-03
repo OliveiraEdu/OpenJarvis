@@ -31,6 +31,18 @@ class TestSafeEval:
     def test_power(self):
         assert safe_eval("2^10") == 1024
 
+    def test_power_double_asterisk(self):
+        # LLMs write '**' for exponentiation; the Rust (meval) backend only
+        # understands '^', so the tool must normalize '**' -> '^' up front.
+        assert safe_eval("2**10") == 1024
+
+    def test_cagr_expression_double_asterisk(self):
+        # Regression: the research VERIFY prompt's CAGR formula uses '**'.
+        # meval rejected it ("Unexpected token at byte 15") and the agent
+        # degraded into a ~27-turn loop repeating the identical failing call.
+        result = safe_eval("((60.12/55.78)**(1/1)-1)*100")
+        assert abs(result - 7.78) < 0.01
+
     def test_negative(self):
         assert safe_eval("-5 + 3") == -2
 
@@ -99,6 +111,12 @@ class TestCalculatorTool:
         # meval returns infinity for division by zero (not an error)
         assert result.success is True
         assert result.content == "inf"
+
+    def test_power_double_asterisk_via_tool(self):
+        tool = CalculatorTool()
+        result = tool.execute(expression="2**10")
+        assert result.success is True
+        assert float(result.content) == 1024
 
     def test_invalid_expression_error(self):
         tool = CalculatorTool()

@@ -90,12 +90,20 @@ def _safe_eval_node(node: ast.AST) -> Any:
 
 
 def safe_eval(expression: str) -> float:
-    """Evaluate a math expression safely — Rust backend with Python fallback."""
+    """Evaluate a math expression safely — Rust backend with Python fallback.
+
+    The Rust backend parses with the meval crate, which uses ``^`` for
+    exponentiation and rejects ``**``. LLMs overwhelmingly write ``**`` for
+    power (and the research VERIFY prompt shows ``**`` examples), so normalize
+    ``**`` -> ``^`` up front; the Python fallback handles both notations
+    natively (``^`` is translated to ``**`` below).
+    """
+    rust_expr = expression.replace("**", "^")
     try:
         from openjarvis._rust_bridge import get_rust_module
 
         _rust = get_rust_module()
-        return float(_rust.CalculatorTool().execute(expression))
+        return float(_rust.CalculatorTool().execute(rust_expr))
     except ImportError:
         import ast as _ast
 
