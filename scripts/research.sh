@@ -19,7 +19,8 @@
 #                      feedback on that phase's trace, feeding the
 #                      Trace-Driven Learning loop (Phase B of the TDL work).
 #
-# Each phase is checked for its artifact file (one retry per phase), so a
+# Each phase is checked for its artifact file (up to two retries, three
+# attempts per phase — MAX_ATTEMPTS in research_phases.py), so a
 # shortcutting model cannot silently return without the deliverable. Phase 2
 # (VERIFY) and phase 3b (REPORT part 2) degrade instead of aborting: a weak
 # VERIFY marks numbers.md UNVERIFIED and the run continues (a weak VERIFY
