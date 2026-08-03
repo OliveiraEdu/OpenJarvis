@@ -21,9 +21,11 @@
 #
 # Each phase is checked for its artifact file (one retry per phase), so a
 # shortcutting model cannot silently return without the deliverable. Phase 2
-# (VERIFY) degrades instead of aborting: if the calculator tool gate cannot
-# be met after retries, numbers.md is marked UNVERIFIED and the run
-# continues, so a weak VERIFY phase cannot throw away the GATHER work.
+# (VERIFY) and phase 3b (REPORT part 2) degrade instead of aborting: a weak
+# VERIFY marks numbers.md UNVERIFIED and the run continues (a weak VERIFY
+# must not throw away the GATHER work); a weak 3b accepts the best-effort
+# report with an explicit caveat and still runs the provenance check (a weak
+# 3b must not throw away the part-1 work).
 #
 # Phase B feedback is written for every phase outcome — high on success
 # (retries, artifact size), low on gate failure — feeding the TDL loop.
@@ -138,8 +140,11 @@ EOF
 # pollute the artifact for the next attempt.
 # Optional 7th arg: feedback keyword — when set, on success a deterministic
 # TDL score is written to the trace that produced the artifact (Phase B).
+# Optional 8th arg: normalize hook — a function invoked with the host
+# artifact path right before validation (idempotent repairs, e.g.
+# fix_glued_headings for the report phases).
 run_phase() {
-  local label="$1" prompt="$2" host_artifact="$3" validator="${4:-true}" tool_req="${5:-}" snapshot="${6:-}" fb_keyword="${7:-}" attempt=1
+  local label="$1" prompt="$2" host_artifact="$3" validator="${4:-true}" tool_req="${5:-}" snapshot="${6:-}" fb_keyword="${7:-}" normalize="${8:-}" attempt=1
   while :; do
     echo ""
     echo "[research] ${label} — attempt ${attempt}..."
@@ -153,6 +158,13 @@ run_phase() {
     local asklog
     asklog="$(mktemp)"
     make -C "$ROOT" jarvis-exec CMD="jarvis agents ask $AGENT_NAME \"$prompt\"" 2>&1 | tee "$asklog" || true
+    # Optional repair hook (idempotent): normalize the artifact before
+    # validation — e.g. un-glue markdown headings glued to the end of a
+    # paragraph (the report validators anchor on ^# and would otherwise
+    # fail a content-complete report over a missing blank line).
+    if [ -n "$normalize" ]; then
+      $normalize "$host_artifact"
+    fi
     local ok=0
     if ! { [ -f "$host_artifact" ] \
            && [ "$(stat -c%s "$host_artifact" 2>/dev/null || echo 0)" -ge "${MIN_ARTIFACT_SIZE:-200}" ] \
@@ -290,6 +302,32 @@ check_report_sections() {
   return 0
 }
 
+# Normalize hook for the report phases: the model sometimes glues a markdown
+# heading to the end of the previous paragraph ("...ARM-based servers.##
+# Sources & References") with no blank line. check_report_sections anchors on
+# line-start headings, so a content-complete report would fail the gate
+# purely over formatting. Insert a blank line before any heading whose whole
+# hash run is glued directly to text; the leading title, already-separated
+# headings, and headings inside code blocks are untouched. Idempotent (safe
+# on every attempt, including retries and the degrade path). NB: the
+# lookbehinds must exclude '#' too — matching at the 2nd+ '#' of a line-start
+# heading would eat a hash and break idempotency.
+fix_glued_headings() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  python3 - "$f" <<'PYEOF'
+import re
+import sys
+
+p = sys.argv[1]
+with open(p, encoding="utf-8") as fh:
+    text = fh.read()
+fixed = re.sub(r"(?<=.)(?<![#\n])(#{1,6} )(?!#)", r"\n\n\1", text)
+with open(p, "w", encoding="utf-8") as fh:
+    fh.write(fixed)
+PYEOF
+}
+
 # Provenance check (SOFT — never fails the run): every source URL in the
 # report should trace back to findings.md, which only stores URLs returned
 # by web_search. The model tends to fabricate plausible-looking URLs (e.g.
@@ -351,7 +389,7 @@ fi
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
 run_phase "phase 3a (report part 1)" \
   "WRITE PART 1 OF THE FINAL REPORT. Topic: ${TOPIC}. Do this now, in order: (1) Read ${FINDINGS} and ${NUMBERS} with file_read. (2) Write to ${REPORT} using file_write — CRITICAL: write in SEQUENTIAL CHUNKS because a single large write gets rejected by the tool-call JSON grammar and kills the turn. First call: file_write(path=${REPORT}, mode='write', create_dirs=true, content=# Title + blank line + ## Introduction). Then APPEND with mode='append': ## Executive Summary, then ## Detailed Analysis (split into 2 chunks if needed). Keep EVERY single write under ~1500 characters, and never use mode='write' again after the first call. Start every appended chunk with a blank line before its ## heading so sections do not glue together. (3) NUMBERS MUST MATCH ${NUMBERS}: every CAGR/projection/share must be calculator-verified; if a source's claimed CAGR differs from the computed one print both and flag it; never silently mix figures with different base years. If ${NUMBERS} starts with a '> **UNVERIFIED**' banner, put that same banner as the first line of ${REPORT} and explicitly label every figure as NOT machine-verified. (4) This is PART 1 only: Title, Introduction, Executive Summary, Detailed Analysis. DO NOT write Conclusions, Sources, or Confidence Assessment yet — a later step appends them. (5) Reply with 'part 1 done' and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" "" "WRITE PART 1 OF THE FINAL REPORT" || exit 1
+  "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" "" "WRITE PART 1 OF THE FINAL REPORT" fix_glued_headings || exit 1
 
 # Snapshot part 1 so each part-2 attempt starts from a clean state (a failed
 # attempt's appends must not pollute the next attempt).
@@ -359,11 +397,41 @@ cp -f "${WORKSPACE_HOST}/${slug}/report.md" "${WORKSPACE_HOST}/${slug}/report.pa
 echo "[research] part 1 snapshot saved (report.part1)"
 
 # ── 8. Phase 3b — REPORT part 2 (append Conclusions..Confidence, chunked)
-run_phase "phase 3b (report part 2)" \
+if ! run_phase "phase 3b (report part 2)" \
   "WRITE PART 2 OF THE FINAL REPORT, APPENDING to the existing file. Topic: ${TOPIC}. (1) The file ${REPORT} already exists with the Title, Introduction, Executive Summary, and Detailed Analysis sections. Read ${NUMBERS} with file_read if you need the verified figures. (2) APPEND the remaining sections to ${REPORT} with file_write mode='append', one section per call, each write under ~1500 characters, each chunk STARTING WITH A BLANK LINE before its ## heading: ## Conclusions, then ## Sources & References (numbered list with publisher, title, date, URL for every claim), then ## Confidence Assessment (per-section high/medium/low with one-line justification, plus an overall assessment). NEVER use mode='write' — that would erase part 1. (3) When all three sections are appended, reply with a 1-2 paragraph summary of the complete report and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" "WRITE PART 2 OF THE FINAL REPORT" || exit 1
+  "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" "WRITE PART 2 OF THE FINAL REPORT" fix_glued_headings; then
+  # Degrade, don't abort: like phase 2, a weak REPORT part 2 must not throw
+  # away the part-1 work. Accept the best report we have (part 1 plus
+  # whatever the last attempt appended), repair glued headings, and make the
+  # status explicit to the reader. The provenance check below still runs.
+  echo "[research] WARNING: phase 3b (report part 2) failed after retries — accepting best-effort report."
+  fix_glued_headings "${WORKSPACE_HOST}/${slug}/report.md"
+  if check_report_sections "${WORKSPACE_HOST}/${slug}/report.md"; then
+    # All sections are present once headings were repaired — the gate failed
+    # on formatting only (glued headings), not missing content.
+    printf '\n> **NOTE** — phase 3b initially failed validation; after heading repair all required sections are present.\n' >> "${WORKSPACE_HOST}/${slug}/report.md"
+    echo "[research] report complete after heading repair (all sections present)."
+  else
+    printf '\n> **PARTIAL REPORT** — phase 3b could not complete within retries; the report may be missing sections or contain unverified content. Review before relying on it.\n' >> "${WORKSPACE_HOST}/${slug}/report.md"
+    echo "[research] accepting PARTIAL report (some sections still missing)."
+  fi
+fi
 
-# ── 9. Provenance note (soft): flag fabricated-looking source URLs.
+# ── 9. UNVERIFIED banner (deterministic, script-side): the model has twice
+# ignored the prompt instruction to carry the phase-2 UNVERIFIED banner into
+# the report. If numbers.md was degraded, prepend the banner to report.md
+# regardless of model compliance so the reader can see the figures are not
+# machine-verified.
+if grep -q '^> \*\*UNVERIFIED\*\*' "${WORKSPACE_HOST}/${slug}/numbers.md" 2>/dev/null \
+   && ! grep -q '^> \*\*UNVERIFIED\*\*' "${WORKSPACE_HOST}/${slug}/report.md" 2>/dev/null; then
+  tmp_banner="$(mktemp)"
+  printf '> **UNVERIFIED** — figures in this report could not be machine-verified; every figure is model-stated only. Re-run verification before relying on any number.\n\n' > "$tmp_banner"
+  cat "${WORKSPACE_HOST}/${slug}/report.md" >> "$tmp_banner"
+  mv -f "$tmp_banner" "${WORKSPACE_HOST}/${slug}/report.md"
+  echo "[research] prepended UNVERIFIED banner to report.md (deterministic)"
+fi
+
+# ── 10. Provenance note (soft): flag fabricated-looking source URLs.
 check_sources_provenance "${WORKSPACE_HOST}/${slug}/report.md" || true
 
 rm -f "${WORKSPACE_HOST}/${slug}/report.part1"
