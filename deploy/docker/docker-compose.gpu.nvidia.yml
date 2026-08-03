@@ -24,6 +24,10 @@ services:
     environment:
       - OPENJARVIS_API_KEY=${OPENJARVIS_API_KEY:?OPENJARVIS_API_KEY must be set (see .env.example)}
       - OPENJARVIS_WORKSPACE=/workspace
+      # Optional Tavily API key — forwarded from deploy/docker/.env (gitignored)
+      # for the `web_search` provider "tavily". Empty by default: web_search
+      # then runs DuckDuckGo and Tavily is never contacted.
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
