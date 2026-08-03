@@ -68,5 +68,12 @@ def test_scan_empty_store(tmp_path: Path) -> None:
 def test_registered() -> None:
     from openjarvis.tools.scan_chunks import ScanChunksTool
 
-    ToolRegistry.register_value("scan_chunks", ScanChunksTool)
+    # Order-independent registration check: the module registers itself via
+    # @ToolRegistry.register at import time, but the autouse conftest fixture
+    # clears registries between tests — so depending on whether this process
+    # already imported the module, the entry may or may not exist yet. The
+    # old unconditional register_value raised when the module was cached
+    # (flaky under xdist).
+    if not ToolRegistry.contains("scan_chunks"):
+        ToolRegistry.register_value("scan_chunks", ScanChunksTool)
     assert ToolRegistry.contains("scan_chunks")

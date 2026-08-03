@@ -119,5 +119,12 @@ def test_filter_by_source(store: KnowledgeStore) -> None:
 def test_registered() -> None:
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
 
-    ToolRegistry.register_value("knowledge_sql", KnowledgeSQLTool)
+    # Order-independent registration check: the module registers itself via
+    # @ToolRegistry.register at import time, but the autouse conftest fixture
+    # clears registries between tests — so depending on whether this process
+    # already imported the module, the entry may or may not exist yet. The
+    # old unconditional register_value raised when the module was cached
+    # (flaky under xdist).
+    if not ToolRegistry.contains("knowledge_sql"):
+        ToolRegistry.register_value("knowledge_sql", KnowledgeSQLTool)
     assert ToolRegistry.contains("knowledge_sql")
