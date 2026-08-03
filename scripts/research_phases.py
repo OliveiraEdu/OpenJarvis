@@ -72,7 +72,10 @@ PHASES: dict[str, PhaseSpec] = {
         tool_req="web_search:2",
         snapshot=None,
         fb_keyword="GATHER FACTS",
-        normalize=None,
+        # the model glues '### Fact N' headings to the previous line in
+        # findings.md (edgeai run, 2026-08-03) — repair them like the report
+        # phases do (D5: structure from code, not prompt).
+        normalize="fix_glued_headings",
     ),
     "verify": PhaseSpec(
         label="phase 2 (verify)",

@@ -35,7 +35,7 @@ from research_phases import (
     run_phase,
     write_feedback,
 )
-from tests.pipeline.helpers import ARM, HPC
+from tests.pipeline.helpers import ARM, FIXTURES, HPC
 
 REQUIRED_ENV = (
     "OJ_TOPIC",
@@ -205,6 +205,8 @@ def test_phase_specs_are_self_consistent():
 def test_gather_and_verify_spec_contracts():
     gather, verify = PHASES["gather"], PHASES["verify"]
     assert gather.validator is None and gather.tool_req == "web_search:2"
+    # gather repairs glued '### Fact N' headings like the report phases (D5)
+    assert gather.normalize == "fix_glued_headings"
     assert verify.validator == "check_numbers_table"
     assert verify.tool_req == "calculator:1"
     assert verify.snapshot is None
@@ -345,6 +347,25 @@ def test_run_phase_normalize_hook_repairs_glued_headings(tmp_path):
     assert run_phase(spec, ctx, ask=ask) is True
     assert len(ask.calls) == 1
     assert artifact_path(ctx, spec).read_text(encoding="utf-8") != glued
+
+
+def test_gather_normalize_repairs_glued_findings(tmp_path):
+    """The edgeai live run (2026-08-03) glued '### Fact N' headings to the
+    previous URL line in findings.md. Gather now repairs them with the same
+    idempotent hook as the report phases (D5 — structure from code), using
+    the real degraded fixture as the fake model output."""
+    ctx = make_ctx(tmp_path)
+    spec = PHASES["gather"]
+    glued = (FIXTURES / "artifacts" / "edgeai" / "findings.md").read_text(
+        encoding="utf-8"
+    )
+    assert "market### Fact 3" in glued  # fixture really is glued
+    ask = FakeAsk(ctx, spec, [(glued, ASKLOG_GATHER)])
+    assert run_phase(spec, ctx, ask=ask) is True
+    fixed = artifact_path(ctx, spec).read_text(encoding="utf-8")
+    assert "\n\n### Fact 3" in fixed
+    assert "\n\n### Fact 4" in fixed
+    assert fixed != glued  # repair changed something (idempotent hook)
 
 
 def test_run_phase_restores_snapshot_before_each_attempt(tmp_path, capsys):
