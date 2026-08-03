@@ -89,12 +89,19 @@ export ENGINE_DEFAULT="llamacpp"
 export ENGINE_LLAMACPP_HOST="$LLAMA_HOST_URL"
 
 # ── 2. Initialize Jarvis Config & Configure CORS ──────────────────────
-info "Initializing OpenJarvis configuration..."
-run_jarvis init --engine llamacpp --force --yes < /dev/null &>/dev/null \
-  || run_jarvis init --engine llamacpp --force < /dev/null &>/dev/null \
-  || true
-
+# Initialize only on first boot (when config.toml is missing). The state dir
+# is bind-mounted and user edits to ~/.openjarvis/config.toml (e.g. the
+# [tools.web_search] provider toggle) must survive container restarts —
+# `jarvis init --force` regenerates the file from defaults and would silently
+# destroy them on every boot.
 CONFIG_FILE="$HOME/.openjarvis/config.toml"
+info "Initializing OpenJarvis configuration..."
+if [ ! -f "$CONFIG_FILE" ]; then
+  run_jarvis init --engine llamacpp --force --yes < /dev/null &>/dev/null \
+    || run_jarvis init --engine llamacpp --force < /dev/null &>/dev/null \
+    || true
+fi
+
 if [ -f "$CONFIG_FILE" ]; then
   if grep -q "\[engine\.llamacpp\]" "$CONFIG_FILE"; then
     sed -i '/\[engine\.llamacpp\]/,/\[/ s|#\? \?host = .*|host = "'"$LLAMA_HOST_URL"'"|' "$CONFIG_FILE"
