@@ -62,6 +62,22 @@ checks are acceptable only as a first pass, and every validator must be
 covered by a fixture-derived test that pins its real behavior (including its
 failure modes).
 
+Implementation status (in `scripts/research_lib.sh` + `scripts/research_eval.py`):
+- The numbers-table validator re-evaluates every parenthesized math
+  expression with calculator semantics and fails on anything that does not
+  compute: unbalanced parens, a syntax error, a non-finite result, or an
+  inline claimed `= <result>` that disagrees with the computation. Year-range
+  parens like `(2025-2030)` evaluate (negatively) and so cannot serve as
+  calculator evidence. The evaluator is a stdlib-only port of
+  `calculator.safe_eval` (same operators/functions, `^` and `**` both mean
+  power) because the live pipeline runs validators under the host `python3`,
+  which cannot import `openjarvis`.
+- The provenance validator resolves URLs by normalized components (scheme,
+  host without leading `www.`, path without trailing slash; fragment/query
+  dropped) instead of raw substring grep, so legitimate citations with a
+  trailing slash or fragment are not flagged while same-host-different-path
+  fabrication still is.
+
 ### D4 — One dialect per tool; prompt↔tool contracts are machine-checked
 
 A tool accepts one notation (`^`, not `**`; `mode=`, not `write:`). Every

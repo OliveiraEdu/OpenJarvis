@@ -69,3 +69,42 @@ def test_provenance_mixed_urls_counts_correctly(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "1/2 report URL(s) not found" in proc.stdout
     assert "PROVENANCE NOTE" in report.read_text(encoding="utf-8")
+
+
+def test_provenance_resolves_trailing_slash_and_fragment(tmp_path):
+    """URL resolution is component-based (D3): a trailing slash or a fragment
+    must not make a legitimate citation look fabricated."""
+    report = tmp_path / "report.md"
+    report.write_text(f"# R\n\n## Sources\n\n{KNOWN_URL}/\n{KNOWN_URL}#overview\n")
+
+    proc = run_lib('check_sources_provenance "$1" "$2"', str(report), str(FINDINGS))
+    assert proc.returncode == 0, proc.stderr
+    assert "0/2 report URL(s) not found" in proc.stdout
+    assert "PROVENANCE NOTE" not in report.read_text(encoding="utf-8")
+
+
+def test_provenance_resolves_without_www(tmp_path):
+    """A bare host resolves against the findings' www. variant."""
+    report = tmp_path / "report.md"
+    bare = KNOWN_URL.replace("https://www.", "https://")
+    report.write_text(f"# R\n\n## Sources\n\n{bare}\n")
+
+    proc = run_lib('check_sources_provenance "$1" "$2"', str(report), str(FINDINGS))
+    assert proc.returncode == 0, proc.stderr
+    assert "0/1 report URL(s) not found" in proc.stdout
+    assert "PROVENANCE NOTE" not in report.read_text(encoding="utf-8")
+
+
+def test_provenance_same_host_different_path_still_unmatched(tmp_path):
+    """Normalization must not over-match: same host, different path is the
+    fabricated-URL failure mode in miniature and must stay flagged."""
+    report = tmp_path / "report.md"
+    report.write_text(
+        "# R\n\n## Sources\n\n"
+        "https://www.mordorintelligence.com/industry-reports/something-else\n"
+    )
+
+    proc = run_lib('check_sources_provenance "$1" "$2"', str(report), str(FINDINGS))
+    assert proc.returncode == 0, proc.stderr
+    assert "1/1 report URL(s) not found" in proc.stdout
+    assert "PROVENANCE NOTE" in report.read_text(encoding="utf-8")

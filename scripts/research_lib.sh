@@ -8,29 +8,47 @@
 # (tests/pipeline/, which sources this file via `bash -c`).
 #
 # Contract for every function here:
-#   - NO global shell variables: every input arrives as an explicit argument
-#     (the one historical exception — check_sources_provenance reading
-#     ${WORKSPACE_HOST}/${slug}/findings.md implicitly — was removed so the
-#     function is testable and reusable).
+#   - NO global shell variables except the single readonly _RESEARCH_LIB_DIR
+#     below (the directory of this file, computed once at source time so the
+#     python engine scripts/research_eval.py can be located from any cwd —
+#     the one documented exception to the no-globals rule). Every other input
+#     arrives as an explicit positional argument.
 #   - Deterministic: same inputs -> same outputs, no network, no LLM.
 #   - Side effects are limited to the artifact path passed in, and are
 #     idempotent where they mutate (banner prepend, heading repair).
 #   - Exit 0 = the check passed / the repair succeeded; exit 1 = failed.
 #     Diagnostics go to stdout, never stderr, so callers can tee them.
 #
+# The math/provenance checks delegate to scripts/research_eval.py — a
+# stdlib-only engine (the live pipeline runs validators under the host
+# python3, which cannot import openjarvis; only the uv venv can). Keep its
+# evaluator whitelists in sync with src/openjarvis/tools/calculator.py.
+#
 # Add a new check here before wiring it into research.sh, then cover it in
 # tests/pipeline/ with a real trace-derived fixture (C3).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Validator: the numbers table must have at least 3 data rows and show at
-# least one parenthesized formula (evidence the calculator was really used).
+if [ -z "${_RESEARCH_LIB_DIR:-}" ]; then
+  _RESEARCH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+# Validator (D3 — verifies a property, not text): the numbers table must have
+# at least 3 data rows AND every parenthesized math expression must actually
+# evaluate with calculator semantics (re-evaluated via research_eval.py), with
+# at least one producing a finite non-negative figure — real calculator
+# evidence. A "(2025-2030)" year range evaluates (negatively) so it can never
+# satisfy the evidence requirement; a broken, unbalanced, or mismatched
+# (claimed "= result" disagrees with the computation) formula fails the gate.
 check_numbers_table() {
-  local f="$1"
-  local rows
-  rows="$(grep -cE '^\|' "$f" 2>/dev/null || true)"
-  [ "${rows:-0}" -ge 3 ] || return 1
-  grep -qE '\([^)]*[0-9][^)]*\)' "$f" || return 1
-  return 0
+  python3 "$_RESEARCH_LIB_DIR/research_eval.py" check-numbers-table "$1"
+}
+
+# Evaluator seam: evaluate a math expression with the same semantics as the
+# calculator tool (^ and ** both mean power; math functions/constants per
+# calculator.py). Prints the result; exits 1 on any error.
+# Signature: eval_expression <expr>
+eval_expression() {
+  python3 "$_RESEARCH_LIB_DIR/research_eval.py" eval "$1"
 }
 
 # Validator: part 1 must contain the first three required sections.
@@ -89,32 +107,12 @@ PYEOF
 # by web_search. The model tends to fabricate plausible-looking URLs (e.g.
 # .../report-...-123456789.html); any report URL with no match in findings is
 # printed and a caveat is appended to the artifact, so fabrication is visible
-# to the reader instead of silently shipping as a citation.
+# to the reader instead of silently shipping as a citation. Resolution is by
+# normalized components (scheme, host without leading www., path without
+# trailing slash; fragment/query dropped) — done in research_eval.py.
 # Signature: check_sources_provenance <report> <findings>
 check_sources_provenance() {
-  local f="$1" findings="$2"
-  local report_urls findings_urls norm total=0 unmatched=0 url
-  report_urls="$(grep -oE 'https?://[^ )>]+' "$f" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
-  findings_urls="$(grep -oE 'https?://[^ )>]+' "$findings" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
-  if [ -z "$report_urls" ]; then
-    echo "[research] provenance: no URLs found in report"
-    return 0
-  fi
-  while IFS= read -r url; do
-    [ -n "$url" ] || continue
-    total=$((total + 1))
-    norm="${url%/}"
-    if ! grep -qF -- "$norm" <<<"$findings_urls"; then
-      unmatched=$((unmatched + 1))
-      echo "[research] provenance: UNMATCHED source URL -> $url"
-    fi
-  done <<<"$report_urls"
-  echo "[research] provenance: ${unmatched}/${total} report URL(s) not found in findings.md"
-  if [ "$unmatched" -gt 0 ]; then
-    printf '\n> **PROVENANCE NOTE** — %s of %s source URL(s) in this report were not found in the gathered findings; they may be fabricated — verify every URL before citing.\n' "$unmatched" "$total" >> "$f"
-    echo "[research] appended provenance caveat to $(basename "$f")"
-  fi
-  return 0
+  python3 "$_RESEARCH_LIB_DIR/research_eval.py" check-provenance "$1" "$2"
 }
 
 # Tool-usage gate helper: how many times did the captured ask trace call
