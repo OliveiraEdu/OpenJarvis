@@ -556,6 +556,15 @@ class AgentExecutor:
         agent_ctx = AgentContext()
         memory_results = []
 
+        # Use pending user messages as query, fall back to instruction.
+        # Defined unconditionally so the trace snapshot below always carries
+        # the real user prompt (memory context may be disabled).
+        query = ""
+        if pending:
+            query = " ".join(m["content"] for m in pending)
+        elif instruction:
+            query = instruction
+
         if (
             self._system
             and getattr(self._system, "memory_backend", None)
@@ -574,12 +583,6 @@ class AgentExecutor:
                     min_score=sys_cfg.memory.context_min_score,
                     max_context_tokens=sys_cfg.memory.context_max_tokens,
                 )
-                # Use pending user messages as query, fall back to instruction
-                query = ""
-                if pending:
-                    query = " ".join(m["content"] for m in pending)
-                elif instruction:
-                    query = instruction
 
                 if query:
                     results = self._system.memory_backend.retrieve(
@@ -608,7 +611,12 @@ class AgentExecutor:
         # query and model instead of the stale summary_memory / config label.
         if self._trace_store:
             self._trace_ctx[agent["id"]] = {
-                "input": input_text[:1000],
+                # The real user prompt, not the retrieval-prepended input_text:
+                # the injected KB blob can push the prompt past the 1000-char
+                # window, which breaks the phase-keyword feedback lookups in
+                # scripts/research.sh (record_feedback). Fall back to the full
+                # input when there is no explicit user prompt.
+                "input": (query or input_text)[:1000],
                 "model": model,
                 "engine": getattr(engine, "engine_id", "") or type(engine).__name__,
             }

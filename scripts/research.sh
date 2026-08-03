@@ -290,6 +290,38 @@ check_report_sections() {
   return 0
 }
 
+# Provenance check (SOFT — never fails the run): every source URL in the
+# report should trace back to findings.md, which only stores URLs returned
+# by web_search. The model tends to fabricate plausible-looking URLs (e.g.
+# .../report-...-123456789.html); any report URL with no match in findings is
+# printed and a caveat is appended to the artifact, so fabrication is visible
+# to the reader instead of silently shipping as a citation.
+check_sources_provenance() {
+  local f="$1"
+  local report_urls findings_urls norm total=0 unmatched=0 url
+  report_urls="$(grep -oE 'https?://[^ )>]+' "$f" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
+  findings_urls="$(grep -oE 'https?://[^ )>]+' "${WORKSPACE_HOST}/${slug}/findings.md" 2>/dev/null | sed 's/[.,;:)]*$//' || true)"
+  if [ -z "$report_urls" ]; then
+    echo "[research] provenance: no URLs found in report"
+    return 0
+  fi
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    total=$((total + 1))
+    norm="${url%/}"
+    if ! grep -qF -- "$norm" <<<"$findings_urls"; then
+      unmatched=$((unmatched + 1))
+      echo "[research] provenance: UNMATCHED source URL -> $url"
+    fi
+  done <<<"$report_urls"
+  echo "[research] provenance: ${unmatched}/${total} report URL(s) not found in findings.md"
+  if [ "$unmatched" -gt 0 ]; then
+    printf '\n> **PROVENANCE NOTE** — %s of %s source URL(s) in this report were not found in the gathered findings; they may be fabricated — verify every URL before citing.\n' "$unmatched" "$total" >> "$f"
+    echo "[research] appended provenance caveat to $(basename "$f")"
+  fi
+  return 0
+}
+
 # ── 5. Phase 1 — GATHER (scaffold findings early, append as you go)
 run_phase "phase 1 (gather)" \
   "GATHER FACTS. Topic: ${TOPIC}. Work this way, in order: (1) Run 3-4 web_search queries with different angles (each result is compact; you may pass a URL as the query to fetch a page - clean text extract). NEVER use http_request. (2) AFTER YOUR SECOND SEARCH, immediately create ${FINDINGS} with file_write (path=${FINDINGS}, mode='write', create_dirs=true) containing the facts you have so far — for every fact include: the fact, source name, publication date if known, and URL. (3) Keep searching / fetching, and after each new finding APPEND it to ${FINDINGS} with file_write mode='append' — never mode='write' again (it would erase what you already saved). Include every market-size figure and CAGR figure found, with base year and currency. (4) When done, reply with just 'done' and the path. Do NOT write the final report yet." \
@@ -297,23 +329,28 @@ run_phase "phase 1 (gather)" \
 
 # ── 6. Phase 2 — VERIFY (math consistency, artifact-enforced)
 if ! run_phase "phase 2 (verify)" \
-  "VERIFY THE NUMBERS WITH THE CALCULATOR TOOL. Topic: ${TOPIC}. CRITICAL: this phase is machine-checked — the run is judged FAILED unless the execution log shows you actually CALLED the calculator tool (calculator(expression=...)) at least once. Writing the file without calling calculator counts as a failed phase. Do this now, in order: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, call the calculator tool with the math expression and READ the returned result before continuing — e.g. calculator(expression='((79.81/43.19)**(1/5)-1)*100') for a CAGR, calculator(expression='100*(1+0.15)**5') for a projection. If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) ONLY AFTER all calculations are done, write the verified figures to ${NUMBERS} using ONE file_write (mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. (4) Reply with just 'done' and the path. Do NOT write the report yet." \
+  "VERIFY THE NUMBERS WITH THE CALCULATOR TOOL. Topic: ${TOPIC}. CRITICAL: this phase is machine-checked — the execution log must show BOTH (a) at least one real calculator(expression=...) call AND (b) one file_write that creates ${NUMBERS}. Calling the calculator without then writing the file counts as a FAILED phase; writing the file without calling the calculator also counts as FAILED. Only the execution log is judged, not your final reply text. Do this now, in order: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, call the calculator tool with the math expression and READ the returned result before continuing — e.g. calculator(expression='((79.81/43.19)**(1/5)-1)*100') for a CAGR, calculator(expression='100*(1+0.15)**5') for a projection. If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) AFTER the calculations, IMMEDIATELY write the verified figures to ${NUMBERS} with ONE file_write (path=${NUMBERS}, mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. This file_write is MANDATORY: it is the deliverable of the phase. (4) Only after that file_write has succeeded, reply with just 'done' and the path. Do NOT write the report yet." \
   "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" "" "VERIFY THE NUMBERS"; then
   # Degrade, don't abort: a weak VERIFY phase must not throw away the GATHER
   # work. Prepend an explicit UNVERIFIED banner to numbers.md so the report
   # phases (and the reader) can see the figures were never calculator-checked.
   echo "[research] WARNING: phase 2 (verify) failed after retries — continuing with figures marked UNVERIFIED."
   numbers_host="${WORKSPACE_HOST}/${slug}/numbers.md"
+  # Build the banner (+ any partial numbers content) and atomically replace
+  # numbers.md. The `[ -f x ] && cat x` idiom short-circuits with exit 1 when
+  # the file is missing, which skipped the mv and orphaned numbers.md.tmp
+  # while leaving NO numbers.md for the report phases — use an explicit if.
   {
-    printf '> **UNVERIFIED** — the calculator tool was not used during VERIFY; every figure below is model-stated only. Re-run verification before relying on any number.\n\n'
-    [ -f "$numbers_host" ] && cat "$numbers_host"
-  } > "${numbers_host}.tmp" && mv "${numbers_host}.tmp" "$numbers_host"
+    printf '> **UNVERIFIED** — figures could not be machine-verified (calculator gate not satisfied); every figure below is model-stated only. Re-run verification before relying on any number.\n\n'
+    if [ -f "$numbers_host" ]; then cat "$numbers_host"; fi
+  } > "${numbers_host}.tmp"
+  mv -f "${numbers_host}.tmp" "$numbers_host"
   echo "[research] ${numbers_host} marked as UNVERIFIED."
 fi
 
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
 run_phase "phase 3a (report part 1)" \
-  "WRITE PART 1 OF THE FINAL REPORT. Topic: ${TOPIC}. Do this now, in order: (1) Read ${FINDINGS} and ${NUMBERS} with file_read. (2) Write to ${REPORT} using file_write — CRITICAL: write in SEQUENTIAL CHUNKS because a single large write gets rejected by the tool-call JSON grammar and kills the turn. First call: file_write(path=${REPORT}, mode='write', create_dirs=true, content=# Title + blank line + ## Introduction). Then APPEND with mode='append': ## Executive Summary, then ## Detailed Analysis (split into 2 chunks if needed). Keep EVERY single write under ~1500 characters, and never use mode='write' again after the first call. Start every appended chunk with a blank line before its ## heading so sections do not glue together. (3) NUMBERS MUST MATCH ${NUMBERS}: every CAGR/projection/share must be calculator-verified; if a source's claimed CAGR differs from the computed one print both and flag it; never silently mix figures with different base years. (4) This is PART 1 only: Title, Introduction, Executive Summary, Detailed Analysis. DO NOT write Conclusions, Sources, or Confidence Assessment yet — a later step appends them. (5) Reply with 'part 1 done' and the path." \
+  "WRITE PART 1 OF THE FINAL REPORT. Topic: ${TOPIC}. Do this now, in order: (1) Read ${FINDINGS} and ${NUMBERS} with file_read. (2) Write to ${REPORT} using file_write — CRITICAL: write in SEQUENTIAL CHUNKS because a single large write gets rejected by the tool-call JSON grammar and kills the turn. First call: file_write(path=${REPORT}, mode='write', create_dirs=true, content=# Title + blank line + ## Introduction). Then APPEND with mode='append': ## Executive Summary, then ## Detailed Analysis (split into 2 chunks if needed). Keep EVERY single write under ~1500 characters, and never use mode='write' again after the first call. Start every appended chunk with a blank line before its ## heading so sections do not glue together. (3) NUMBERS MUST MATCH ${NUMBERS}: every CAGR/projection/share must be calculator-verified; if a source's claimed CAGR differs from the computed one print both and flag it; never silently mix figures with different base years. If ${NUMBERS} starts with a '> **UNVERIFIED**' banner, put that same banner as the first line of ${REPORT} and explicitly label every figure as NOT machine-verified. (4) This is PART 1 only: Title, Introduction, Executive Summary, Detailed Analysis. DO NOT write Conclusions, Sources, or Confidence Assessment yet — a later step appends them. (5) Reply with 'part 1 done' and the path." \
   "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" "" "WRITE PART 1 OF THE FINAL REPORT" || exit 1
 
 # Snapshot part 1 so each part-2 attempt starts from a clean state (a failed
@@ -325,6 +362,9 @@ echo "[research] part 1 snapshot saved (report.part1)"
 run_phase "phase 3b (report part 2)" \
   "WRITE PART 2 OF THE FINAL REPORT, APPENDING to the existing file. Topic: ${TOPIC}. (1) The file ${REPORT} already exists with the Title, Introduction, Executive Summary, and Detailed Analysis sections. Read ${NUMBERS} with file_read if you need the verified figures. (2) APPEND the remaining sections to ${REPORT} with file_write mode='append', one section per call, each write under ~1500 characters, each chunk STARTING WITH A BLANK LINE before its ## heading: ## Conclusions, then ## Sources & References (numbered list with publisher, title, date, URL for every claim), then ## Confidence Assessment (per-section high/medium/low with one-line justification, plus an overall assessment). NEVER use mode='write' — that would erase part 1. (3) When all three sections are appended, reply with a 1-2 paragraph summary of the complete report and the path." \
   "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" "WRITE PART 2 OF THE FINAL REPORT" || exit 1
+
+# ── 9. Provenance note (soft): flag fabricated-looking source URLs.
+check_sources_provenance "${WORKSPACE_HOST}/${slug}/report.md" || true
 
 rm -f "${WORKSPACE_HOST}/${slug}/report.part1"
 
