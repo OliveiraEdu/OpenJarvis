@@ -1,0 +1,9 @@
+  ↳ web_search query=Edge AI inference chips market size 2026 max_results=1
+  ↳ web_search query=Edge AI inference chips market growth tr max_results=1
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=## Edge AI Inference Chips Market Findin
+  ↳ web_search query=Edge AI inference chips market CAGR 2026 max_results=1
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=### Fact 3
+- **Fact**: The Edge AI Chips
+  ↳ web_search query=Edge AI inference chips market size 2026 max_results=1
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=### Fact 4
+- **Fact**: The AI Inference 

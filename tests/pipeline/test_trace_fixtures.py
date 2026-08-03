@@ -45,9 +45,24 @@ def test_verify_degenerate_asklog_frozen_with_broken_asterisk():
     assert "calculator expression=" in log
 
 
+def test_edgeai_slug_drift_asklog_records_mixed_path_writes():
+    """The part1 failure mode of the first typed-launcher run (edgeai,
+    2026-08-03): the model wrote the first chunk to the correct slug path
+    then drifted to a wrong slug (dropped `ai-`) for the remaining appends.
+    The gate caught it — the artifact at the right path stayed too small —
+    so the phase retried. The fixture must keep the drifted writes."""
+    log = (ASKSLOGS / "edgeai-part1-slug-drift.txt").read_text(encoding="utf-8")
+    writes = [l for l in log.splitlines() if "\u21b3 file_write" in l]
+    assert len(writes) >= 2
+    paths = {w.split("path=", 1)[1].split(" ", 1)[0] for w in writes}
+    assert len(paths) > 1  # drifted to a different path mid-run
+
+
 def test_trace_metadata_covers_the_full_run():
-    """All nine traces of the HPC-2026-08-03 run, so the failure sequence
-    (gather -> 3x degenerate verify -> 3a -> 3x 3b) stays replayable."""
+    """All committed trace metadata: the nine traces of the HPC-2026-08-03
+    run (gather -> 3x degenerate verify -> 3a -> 3x 3b) plus the seven traces
+    of the edgeai-2026-08-03 run on the typed Python launcher (gather ->
+    verify -> 3x 3a with slug-drift -> retry -> 3b)."""
     traces = sorted(p.name for p in (FIXTURES / "traces").glob("*.json"))
     assert traces == sorted(
         f"{tid}.json"
@@ -61,6 +76,14 @@ def test_trace_metadata_covers_the_full_run():
             "d60f6d29d7ef4552",
             "dec136a37df44c75",
             "f2505e725d79400a",
+            # edgeai run
+            "4a0a5dad9f3d4ff9",
+            "6a1773a2578d44a4",
+            "6b35140208ab403b",
+            "9fe872cd42b34067",
+            "aff4155eecab4d4f",
+            "b2165aac5c2f4e3b",
+            "d7b88a51de054c99",
         ]
     )
 

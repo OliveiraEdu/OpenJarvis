@@ -1,0 +1,15 @@
+  ↳ file_read path=/workspace/subject-edge-ai-inference-chi
+  ↳ file_read path=/workspace/subject-edge-ai-inference-chi
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=# Edge AI Inference Chips Market
+
+## Int
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=
+
+## Executive Summary
+
+The Edge AI Infe
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=
+
+## Detailed Analysis
+
+### Market Growt

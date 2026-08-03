@@ -1,0 +1,6 @@
+  ↳ file_read path=/workspace/subject-edge-ai-inference-chi
+  ↳ calculator expression=((11.54/3.67)^(1/5)-1)*100
+  ↳ calculator expression=100*(1+0.2105)^5
+  ↳ calculator expression=((11.54/4.44)^(1/5)-1)*100
+  ↳ calculator expression=100*(1+0.2105)^5
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=# Edge AI Inference Chips Market Numbers

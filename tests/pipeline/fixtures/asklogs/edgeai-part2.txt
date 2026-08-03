@@ -1,0 +1,13 @@
+  ↳ file_read path=/workspace/subject-edge-ai-inference-chi
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=
+## Conclusions
+
+The Edge AI inference c
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=
+## Sources & References
+
+1. Globe Newsw
+  ↳ file_write path=/workspace/subject-edge-ai-inference-chi content=
+## Confidence Assessment
+
+### Section: 

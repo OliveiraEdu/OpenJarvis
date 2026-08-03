@@ -1,0 +1,19 @@
+{
+  "agent": "2c528b5212fd",
+  "ended_at": "2026-08-03T21:05:48.820802+00:00",
+  "engine": "instrumented",
+  "feedback": 0.8,
+  "model": "gemma4:31b",
+  "outcome": "success",
+  "query_snippet": "VERIFY THE NUMBERS WITH THE CALCULATOR TOOL. Topic: Subject: Edge AI inference chips market | Scope: global, 2026-2030. ",
+  "result_snippet": "done\n/workspace/subject-edge-ai-inference-chips-market-s/numbers.md",
+  "started_at": "2026-08-03T21:05:27.043499+00:00",
+  "tool_call_counts": {
+    "calculator": 4,
+    "file_read": 1,
+    "file_write": 1
+  },
+  "total_latency_seconds": 21.777302980422974,
+  "total_tokens": 12920,
+  "trace_id": "aff4155eecab4d4f"
+}

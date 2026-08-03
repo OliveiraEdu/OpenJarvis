@@ -18,6 +18,14 @@ live pipeline uses.
   `report.md` has `## Sources & References` and `## Confidence Assessment`
   glued to paragraph text (regression fixture for `fix_glued_headings`);
   `report.part1` is the clean part-1 snapshot.
+- **edgeai/** — `Subject: Edge AI inference chips market` run, 2026-08-03
+  (workspace `subject-edge-ai-inference-chips-market-s`). The first run on
+  the typed Python launcher (research_phases.py): GATHER and VERIFY passed
+  first-try with the canonical-`^`-dialect prompt, and 3a exposed a new
+  failure mode — the model drifted its file_write path to a wrong slug
+  (`subject-edge-inference-chips-market-s`, dropped `ai-`) so the gate
+  failed and the run aborted honestly; on retry 3a and 3b passed. The
+  provenance check flagged 10/10 fabricated report URLs.
 - **asklogs/** — the `jarvis agents ask` live-trace log per phase, rebuilt
   from `trace_steps` in the CLI format (`  ↳ <tool> <k=v ...>`); the
   tool-usage gate counts these lines. `verify-degenerate.txt` preserves the

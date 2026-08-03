@@ -54,6 +54,7 @@ DEFAULT_WORKSPACE = Path.home() / "Git" / "openjarvis-workspace"
 ARTIFACT_RUNS = {
     "hpc": "subject-high-performance-computing-serve",
     "arm": "subject-arm-proceesors-cpu-use-on-server",
+    "edgeai": "subject-edge-ai-inference-chips-market-s",
 }
 ARTIFACT_FILES = ["findings.md", "numbers.md", "report.md", "report.part1"]
 
@@ -64,6 +65,15 @@ ASKSLOGS = [
     ("part1-three-writes", "dec136a37df44c75"),  # 3 file_write (write+append)
     ("part2-one-write", "7a28b8aae48a4346"),  # 1 file_write -> gate FAILS
     ("part2-three-writes", "bb53823f3cee418d"),  # 3 file_write -> gate passes
+    # edgeai run, 2026-08-03 (first run on the typed Python launcher).
+    ("edgeai-gather", "d7b88a51de054c99"),  # 4 web_search + 3 file_write
+    ("edgeai-verify", "aff4155eecab4d4f"),  # calculator + numbers.md (0.8)
+    (
+        "edgeai-part1-slug-drift",
+        "9fe872cd42b34067",
+    ),  # writes drift to wrong slug -> gate FAILS
+    ("edgeai-part1-ok", "4a0a5dad9f3d4ff9"),  # 5 file_write, single path (0.9)
+    ("edgeai-part2", "b2165aac5c2f4e3b"),  # 3 appends from part1 snapshot (1.0)
 ]
 
 # Every trace of the HPC run, for the per-trace metadata record.
@@ -77,6 +87,14 @@ TRACE_IDS = [
     "7a28b8aae48a4346",  # 3b attempt 1 (1 write -> gate)
     "05870f2b0f004bf8",  # 3b attempt 2 (1 write -> gate)
     "bb53823f3cee418d",  # 3b attempt 3 (3 writes, feedback 0.8)
+    # edgeai run traces (5 phase asks + 2 executor continuations).
+    "d7b88a51de054c99",  # gather      (feedback 0.8)
+    "aff4155eecab4d4f",  # verify      (feedback 0.8)
+    "6b35140208ab403b",  # 3a attempt continuation (short tick, no artifact)
+    "9fe872cd42b34067",  # 3a attempt 3, slug-drift (feedback 0.2)
+    "6a1773a2578d44a4",  # 3a attempt continuation (short tick, no artifact)
+    "4a0a5dad9f3d4ff9",  # 3a retry      (feedback 0.9)
+    "b2165aac5c2f4e3b",  # 3b            (feedback 1.0)
 ]
 
 
@@ -222,6 +240,14 @@ def write_readme(exported: list[str]) -> None:
         "  `report.md` has `## Sources & References` and `## Confidence Assessment`\n"
         "  glued to paragraph text (regression fixture for `fix_glued_headings`);\n"
         "  `report.part1` is the clean part-1 snapshot.\n"
+        "- **edgeai/** — `Subject: Edge AI inference chips market` run, 2026-08-03\n"
+        "  (workspace `subject-edge-ai-inference-chips-market-s`). The first run on\n"
+        "  the typed Python launcher (research_phases.py): GATHER and VERIFY passed\n"
+        "  first-try with the canonical-`^`-dialect prompt, and 3a exposed a new\n"
+        "  failure mode — the model drifted its file_write path to a wrong slug\n"
+        "  (`subject-edge-inference-chips-market-s`, dropped `ai-`) so the gate\n"
+        "  failed and the run aborted honestly; on retry 3a and 3b passed. The\n"
+        "  provenance check flagged 10/10 fabricated report URLs.\n"
         "- **asklogs/** — the `jarvis agents ask` live-trace log per phase, rebuilt\n"
         "  from `trace_steps` in the CLI format (`  \u21b3 <tool> <k=v ...>`); the\n"
         "  tool-usage gate counts these lines. `verify-degenerate.txt` preserves the\n"
