@@ -412,6 +412,20 @@ class AgentExecutor:
         # actively invoking web_search/memory_*/etc.
         if self._bus is not None:
             agent_kwargs["bus"] = self._bus
+        # Thread per-agent tuning knobs (max_turns, temperature) declared in
+        # the agent's template/config into the constructed agent. Without
+        # this they silently fall back to the global JarvisConfig defaults
+        # (agent.max_turns=10, intelligence.temperature=0.7), so an agent
+        # created from a template with max_turns=30 would still die after
+        # 10 turns. Agent classes that don't accept the kwargs fall back
+        # cleanly via the TypeError paths below.
+        for knob, cast in (("max_turns", int), ("temperature", float)):
+            value = config.get(knob)
+            if value is not None:
+                try:
+                    agent_kwargs[knob] = cast(value)
+                except (TypeError, ValueError):
+                    agent_kwargs[knob] = value
         # Propagate confirmation policy from the AgentExecutor down to the
         # agent's own ToolExecutor. Set by CLI paths like `jarvis agents ask`
         # so non-interactive runs can auto-approve tool execution.

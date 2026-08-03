@@ -163,3 +163,78 @@ def test_finalize_tick_reads_agent_result_metadata(tmp_path):
     assert updated["total_cost"] == 0.05
     assert updated["stall_retries"] == 0
     mgr.close()
+
+
+def test_invoke_agent_threads_config_max_turns_and_temperature(executor, manager):
+    """_invoke_agent passes per-agent config max_turns/temperature into the
+    constructed agent. Regression: template values (max_turns=30, temp=0.3)
+    were silently dropped, so agents ran at the global default of 10 turns."""
+    from openjarvis.core.registry import AgentRegistry
+
+    captured = {}
+
+    class FakeAgent:
+        accepts_tools = True
+
+        def __init__(
+            self,
+            engine,
+            model,
+            *,
+            tools=None,
+            system_prompt=None,
+            bus=None,
+            max_turns=None,
+            temperature=None,
+        ):
+            captured["max_turns"] = max_turns
+            captured["temperature"] = temperature
+
+        def run(self, input_text, context=None, **kwargs):
+            return AgentResult(content="ok", turns=1)
+
+    agent = manager.create_agent(
+        name="knobs",
+        agent_type="orchestrator",
+        config={"max_turns": 30, "temperature": 0.3},
+    )
+    with patch.object(AgentRegistry, "get", return_value=FakeAgent):
+        result = executor._invoke_agent(manager.get_agent(agent["id"]))
+
+    assert captured["max_turns"] == 30
+    assert captured["temperature"] == 0.3
+    assert result.content == "ok"
+
+
+def test_invoke_agent_leaves_max_turns_default_when_unset(executor, manager):
+    """Without config max_turns, the agent keeps its own default (no kwarg)."""
+    from openjarvis.core.registry import AgentRegistry
+
+    captured = {}
+
+    class FakeAgent:
+        accepts_tools = True
+
+        def __init__(
+            self,
+            engine,
+            model,
+            *,
+            tools=None,
+            system_prompt=None,
+            bus=None,
+            max_turns=None,
+            temperature=None,
+        ):
+            captured["max_turns"] = max_turns
+            captured["temperature"] = temperature
+
+        def run(self, input_text, context=None, **kwargs):
+            return AgentResult(content="ok", turns=1)
+
+    agent = manager.create_agent(name="no-knobs", agent_type="orchestrator")
+    with patch.object(AgentRegistry, "get", return_value=FakeAgent):
+        executor._invoke_agent(manager.get_agent(agent["id"]))
+
+    assert captured["max_turns"] is None
+    assert captured["temperature"] is None
