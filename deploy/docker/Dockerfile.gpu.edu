@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04@sha256:af8bd179ed3bf69d4b63b19a763662a6141f0f62ef099283f68d0b14b4bab0e3 AS builder
 
 # Prevent interactive prompts during apt installs & configure defaults
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -64,7 +64,7 @@ RUN uv run --python 3.11 maturin develop -m rust/crates/openjarvis-python/Cargo.
 # Build Frontend
 RUN cd frontend && npm install && npm run build
 
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04@sha256:af8bd179ed3bf69d4b63b19a763662a6141f0f62ef099283f68d0b14b4bab0e3
 
 # Prevent interactive prompts in final image as well
 ENV DEBIAN_FRONTEND=noninteractive \

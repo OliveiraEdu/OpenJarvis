@@ -5,6 +5,7 @@ description = "Deep, sourced, math-consistent IT-market research reports on dema
 icon = "📊"
 agent_type = "orchestrator"
 schedule_type = "manual"
+schedule_value = 0
 tools = ["web_search", "calculator", "file_write", "file_read", "think"]
 max_turns = 30
 temperature = 0.3
