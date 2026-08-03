@@ -98,7 +98,7 @@ uv run pre-commit install
 
 This installs Git hooks that automatically run [Ruff](https://docs.astral.sh/ruff/) on every commit. If the hooks fail, fix the issues and commit again.
 
-For detailed development setup, code conventions, and project structure, see the [Development Guide](docs/development/contributing.md).
+For detailed development setup, code conventions, and project structure, see the [Development Guide](docs/development/contributing.md). For reliability rules that apply to agentic application code (deterministic core, contract checks, trace-replay regression tests), see the [Engineering Standards](docs/development/engineering-standards.md).
 
 ---
 
@@ -148,6 +148,10 @@ Use the appropriate [issue template](https://github.com/open-jarvis/OpenJarvis/i
    ```
 4. Add tests for new functionality
 5. Follow the [registry pattern](docs/development/contributing.md#registry-pattern) for new components
+6. For the research pipeline (or any agentic application code on top of the
+   framework), follow the [Engineering Standards](docs/development/engineering-standards.md)
+   and its PR checklist — including replaying production failures as
+   trace-derived regression tests (`tests/pipeline/`).
 
 ### Commit Messages
 
