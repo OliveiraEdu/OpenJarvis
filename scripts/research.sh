@@ -62,10 +62,6 @@ WORKSPACE_HOST="${OPENJARVIS_WORKSPACE_HOST:-$HOME/Git/openjarvis-workspace}"
 slug="$(printf '%s' "$TOPIC" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
   | sed 's/^-//;s/-$//' | cut -c1-40)"
 [ -n "$slug" ] || slug="research"
-SLUG_DIR="/workspace/${slug}"
-FINDINGS="${SLUG_DIR}/findings.md"
-NUMBERS="${SLUG_DIR}/numbers.md"
-REPORT="${SLUG_DIR}/report.md"
 
 echo "[research] root:     $ROOT"
 echo "[research] agent:    $AGENT_NAME (template: $TEMPLATE_ID)"
@@ -133,167 +129,50 @@ for (cid,) in db.execute(
 db.commit()
 EOF
 
-# ── 4. Helper: run one phase, verify its artifact exists on the host
-# (bind mounts are synchronous, so the host sees the file immediately; this
-# avoids docker/make/quoting entirely). Two retries per phase.
-# Optional 4th arg: validator function (default: true) that receives the host
-# artifact path and must return 0 for the phase to pass (structural checks).
-# Optional 5th arg: tool-usage gate "tool:mincount" — the captured ask trace
-# must contain at least mincount calls of `↳ <tool>`, else the phase is
-# treated as a failure and retried (enforces the workflow mechanically).
-# Optional 6th arg: snapshot path — restored (cp) over the artifact before
-# every attempt. Used for append-phases so a failed attempt's appends do not
-# pollute the artifact for the next attempt.
-# Optional 7th arg: feedback keyword — when set, on success a deterministic
-# TDL score is written to the trace that produced the artifact (Phase B).
-# Optional 8th arg: normalize hook — a function invoked with the host
-# artifact path right before validation (idempotent repairs, e.g.
-# fix_glued_headings for the report phases).
+# ── 4. Phase orchestration (C1): the retry/gate/feedback loop and the typed
+# phase specs (label, prompt template, artifact, validator, tool gate,
+# snapshot, feedback keyword, normalize hook) live in typed Python —
+# scripts/research_phases.py. This launcher only injects the dynamic context
+# (topic, slug, workspace, state dir, agent) and delegates; the validators,
+# normalize hooks, gate counters, and scoring still run as the SAME bash
+# functions in research_lib.sh that the offline harness in tests/pipeline/
+# exercises via `bash -c`.
+# Usage: run_phase <gather|verify|part1|part2>
 run_phase() {
-  local label="$1" prompt="$2" host_artifact="$3" validator="${4:-true}" tool_req="${5:-}" snapshot="${6:-}" fb_keyword="${7:-}" normalize="${8:-}" attempt=1
-  while :; do
-    echo ""
-    echo "[research] ${label} — attempt ${attempt}..."
-    if [ -n "$snapshot" ] && [ -f "$snapshot" ]; then
-      cp -f "$snapshot" "$host_artifact"
-      echo "[research] ${label}: restored artifact from snapshot"
-    fi
-    # Reset summary_memory so the executor's input stays clean (a stale tick
-    # note makes the model answer with a status report instead of the task).
-    python3 -c "import sqlite3; c=sqlite3.connect('$STATE_DIR/agents.db', timeout=15); c.execute('update managed_agents set summary_memory=? where name=?', ('', '$AGENT_NAME')); c.commit()" 2>/dev/null || true
-    local asklog
-    asklog="$(mktemp)"
-    make -C "$ROOT" jarvis-exec CMD="jarvis agents ask $AGENT_NAME \"$prompt\"" 2>&1 | tee "$asklog" || true
-    # Optional repair hook (idempotent): normalize the artifact before
-    # validation — e.g. un-glue markdown headings glued to the end of a
-    # paragraph (the report validators anchor on ^# and would otherwise
-    # fail a content-complete report over a missing blank line).
-    if [ -n "$normalize" ]; then
-      $normalize "$host_artifact"
-    fi
-    local ok=0
-    if ! { [ -f "$host_artifact" ] \
-           && [ "$(stat -c%s "$host_artifact" 2>/dev/null || echo 0)" -ge "${MIN_ARTIFACT_SIZE:-200}" ] \
-           && $validator "$host_artifact"; }; then
-      ok=1
-    fi
-    if [ -n "$tool_req" ]; then
-      local req_tool="${tool_req%%:*}" req_min="${tool_req##*:}"
-      local n
-      n="$(count_tool_calls "$asklog" "$req_tool")"
-      if [ "${n:-0}" -lt "$req_min" ]; then
-        ok=1
-        echo "[research] ${label}: tool-usage gate failed (${n:-0} ${req_tool} call(s) < ${req_min})"
-      fi
-    fi
-    rm -f "$asklog"
-    if [ "$ok" -eq 0 ]; then
-      echo "[research] ${label} OK -> $host_artifact"
-      if [ -n "$fb_keyword" ]; then
-        record_feedback "$label" "$fb_keyword" "$attempt" "$host_artifact"
-      fi
-      return 0
-    fi
-    if [ "$attempt" -ge 3 ]; then
-      echo "[research] ERROR: ${label} did not produce a valid $host_artifact after ${attempt} attempts." >&2
-      # Record a low feedback score on the failing trace so the TDL loop
-      # sees the failure (score floor well below any passing phase).
-      if [ -n "$fb_keyword" ]; then
-        record_feedback "$label" "$fb_keyword" "$attempt" "$host_artifact" no
-      fi
-      return 1
-    fi
-    echo "[research] artifact missing, too small, failing validation, or tool gate unmet ($host_artifact); retrying..."
-    attempt=$((attempt + 1))
-  done
+  local phase="$1"
+  OJ_TOPIC="$TOPIC" OJ_SLUG="$slug" OJ_WORKSPACE_HOST="$WORKSPACE_HOST" \
+  OJ_STATE_DIR="$STATE_DIR" OJ_AGENT_NAME="$AGENT_NAME" \
+  OJ_MIN_ARTIFACT_SIZE="${MIN_ARTIFACT_SIZE:-200}" \
+    python3 "$ROOT/scripts/research_phases.py" run --phase "$phase"
 }
-
-# ── Phase B — deterministic per-phase feedback (Trace-Driven Learning).
-# After a phase succeeds, derive a quality score [0,1] from signals we
-# already collected (retry-free run means the model did not shortcut;
-# artifact size means substance) and write it as feedback on the trace that
-# produced the artifact. Phase A made this possible: the trace's query now
-# carries the phase prompt, so the right trace is located by keyword.
-record_feedback() {
-  local label="$1" keyword="$2" attempts="$3" artifact="$4" passed="${5:-yes}"
-  local size score agent_uuid
-  size="$(stat -c%s "$artifact" 2>/dev/null || echo 0)"
-  # Score derivation is pure — feedback_score() in research_lib.sh, tested in
-  # tests/pipeline/test_feedback.py (C3).
-  score="$(feedback_score "$attempts" "$size" "$passed")"
-  agent_uuid="$(
-    python3 -c "import sqlite3; print(sqlite3.connect('$STATE_DIR/agents.db').execute(\"select id from managed_agents where name=? and status != 'archived' order by last_run_at desc limit 1\", ('$AGENT_NAME',)).fetchone()[0])" 2>/dev/null || true
-  )"
-  if [ -z "$agent_uuid" ]; then
-    echo "[research] ${label}: agent uuid not found, feedback skipped"
-    return 0
-  fi
-  python3 - "$label" "$keyword" "$score" "$agent_uuid" "$STATE_DIR" <<'PYEOF'
-import sqlite3
-import sys
-
-label, keyword, score, agent_uuid, state_dir = sys.argv[1:]
-db = sqlite3.connect(f"{state_dir}/traces.db", timeout=15)
-row = db.execute(
-    "select trace_id from traces where agent = ? and query like ?"
-    " order by started_at desc limit 1",
-    (agent_uuid, f"%{keyword}%"),
-).fetchone()
-if row:
-    db.execute(
-        "update traces set feedback = ? where trace_id = ?",
-        (float(score), row[0]),
-    )
-    db.commit()
-    print(f"[research] {label}: feedback {score} -> trace {row[0]}")
-else:
-    print(
-        f"[research] {label}: no trace matched keyword '{keyword}', feedback skipped"
-    )
-db.close()
-PYEOF
-}
-
-# Validators, normalize hook (fix_glued_headings), provenance check,
-# tool-gate helper (count_tool_calls), degrade banners, and the feedback
-# score derivation now live in scripts/research_lib.sh (sourced above) —
-# single source of truth, exercised offline by tests/pipeline/.
 
 # ── 5. Phase 1 — GATHER (scaffold findings early, append as you go)
-run_phase "phase 1 (gather)" \
-  "GATHER FACTS. Topic: ${TOPIC}. Work this way, in order: (1) Run 3-4 web_search queries with different angles (each result is compact; you may pass a URL as the query to fetch a page - clean text extract). NEVER use http_request. (2) AFTER YOUR SECOND SEARCH, immediately create ${FINDINGS} with file_write (path=${FINDINGS}, mode='write', create_dirs=true) containing the facts you have so far — for every fact include: the fact, source name, publication date if known, and URL. (3) Keep searching / fetching, and after each new finding APPEND it to ${FINDINGS} with file_write mode='append' — never mode='write' again (it would erase what you already saved). Include every market-size figure and CAGR figure found, with base year and currency. (4) When done, reply with just 'done' and the path. Do NOT write the final report yet." \
-  "${WORKSPACE_HOST}/${slug}/findings.md" true "web_search:2" "" "GATHER FACTS" || exit 1
+run_phase gather || exit 1
 
-# ── 6. Phase 2 — VERIFY (math consistency, artifact-enforced)
-if ! run_phase "phase 2 (verify)" \
-  "VERIFY THE NUMBERS WITH THE CALCULATOR TOOL. Topic: ${TOPIC}. CRITICAL: this phase is machine-checked — the execution log must show BOTH (a) at least one real calculator(expression=...) call AND (b) one file_write that creates ${NUMBERS}. Calling the calculator without then writing the file counts as a FAILED phase; writing the file without calling the calculator also counts as FAILED. Only the execution log is judged, not your final reply text. Do this now, in order: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, call the calculator tool with the math expression and READ the returned result before continuing — e.g. calculator(expression='((79.81/43.19)^(1/5)-1)*100') for a CAGR, calculator(expression='100*(1+0.15)^5') for a projection. The calculator accepts standard math notation — use '^' for exponentiation (NOT '**', which it rejects); if a call returns an error, fix the syntax and retry, and NEVER repeat an identical failing call. If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) AFTER the calculations, IMMEDIATELY write the verified figures to ${NUMBERS} with ONE file_write (path=${NUMBERS}, mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. This file_write is MANDATORY: it is the deliverable of the phase. (4) Only after that file_write has succeeded, reply with just 'done' and the path. Do NOT write the report yet." \
-  "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" "" "VERIFY THE NUMBERS"; then
-  # Degrade, don't abort: a weak VERIFY phase must not throw away the GATHER
-  # work. Prepend an explicit UNVERIFIED banner to numbers.md so the report
-  # phases (and the reader) can see the figures were never calculator-checked.
+# ── 6. Phase 2 — VERIFY (math consistency, artifact-enforced). Degrades, it
+# does not abort: a weak VERIFY must not throw away the GATHER work.
+# Prepend an explicit UNVERIFIED banner to numbers.md so the report phases
+# (and the reader) can see the figures were never calculator-checked.
+if ! run_phase verify; then
   echo "[research] WARNING: phase 2 (verify) failed after retries — continuing with figures marked UNVERIFIED."
   mark_numbers_unverified "${WORKSPACE_HOST}/${slug}/numbers.md"
   echo "[research] ${WORKSPACE_HOST}/${slug}/numbers.md marked as UNVERIFIED."
 fi
 
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
-run_phase "phase 3a (report part 1)" \
-  "WRITE PART 1 OF THE FINAL REPORT. Topic: ${TOPIC}. Do this now, in order: (1) Read ${FINDINGS} and ${NUMBERS} with file_read. (2) Write to ${REPORT} using file_write — CRITICAL: write in SEQUENTIAL CHUNKS because a single large write gets rejected by the tool-call JSON grammar and kills the turn. First call: file_write(path=${REPORT}, mode='write', create_dirs=true, content=# Title + blank line + ## Introduction). Then APPEND with mode='append': ## Executive Summary, then ## Detailed Analysis (split into 2 chunks if needed). Keep EVERY single write under ~1500 characters, and never use mode='write' again after the first call. Start every appended chunk with a blank line before its ## heading so sections do not glue together. (3) NUMBERS MUST MATCH ${NUMBERS}: every CAGR/projection/share must be calculator-verified; if a source's claimed CAGR differs from the computed one print both and flag it; never silently mix figures with different base years. If ${NUMBERS} starts with a '> **UNVERIFIED**' banner, put that same banner as the first line of ${REPORT} and explicitly label every figure as NOT machine-verified. (4) This is PART 1 only: Title, Introduction, Executive Summary, Detailed Analysis. DO NOT write Conclusions, Sources, or Confidence Assessment yet — a later step appends them. (5) Reply with 'part 1 done' and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_part1 "file_write:2" "" "WRITE PART 1 OF THE FINAL REPORT" fix_glued_headings || exit 1
+run_phase part1 || exit 1
 
 # Snapshot part 1 so each part-2 attempt starts from a clean state (a failed
 # attempt's appends must not pollute the next attempt).
 cp -f "${WORKSPACE_HOST}/${slug}/report.md" "${WORKSPACE_HOST}/${slug}/report.part1"
 echo "[research] part 1 snapshot saved (report.part1)"
 
-# ── 8. Phase 3b — REPORT part 2 (append Conclusions..Confidence, chunked)
-if ! run_phase "phase 3b (report part 2)" \
-  "WRITE PART 2 OF THE FINAL REPORT, APPENDING to the existing file. Topic: ${TOPIC}. (1) The file ${REPORT} already exists with the Title, Introduction, Executive Summary, and Detailed Analysis sections. Read ${NUMBERS} with file_read if you need the verified figures. (2) APPEND the remaining sections to ${REPORT} with file_write mode='append', one section per call, each write under ~1500 characters, each chunk STARTING WITH A BLANK LINE before its ## heading: ## Conclusions, then ## Sources & References (numbered list with publisher, title, date, URL for every claim), then ## Confidence Assessment (per-section high/medium/low with one-line justification, plus an overall assessment). NEVER use mode='write' — that would erase part 1. IMPORTANT: the phase gate requires at least TWO separate mode='append' calls (a single write containing all the sections fails the phase), so split ## Conclusions and ## Sources & References into separate calls at minimum. (3) When all three sections are appended, reply with a 1-2 paragraph summary of the complete report and the path." \
-  "${WORKSPACE_HOST}/${slug}/report.md" check_report_sections "file_write:2" "${WORKSPACE_HOST}/${slug}/report.part1" "WRITE PART 2 OF THE FINAL REPORT" fix_glued_headings; then
-  # Degrade, don't abort: like phase 2, a weak REPORT part 2 must not throw
-  # away the part-1 work. Accept the best report we have (part 1 plus
-  # whatever the last attempt appended), repair glued headings, and make the
-  # status explicit to the reader. The provenance check below still runs.
+# ── 8. Phase 3b — REPORT part 2 (append Conclusions..Confidence, chunked).
+# Degrades, it does not abort: a weak 3b must not throw away the part-1 work.
+# Accept the best report we have (part 1 plus whatever the last attempt
+# appended), repair glued headings, and make the status explicit to the
+# reader. The provenance check below still runs.
+if ! run_phase part2; then
   echo "[research] WARNING: phase 3b (report part 2) failed after retries — accepting best-effort report."
   fix_glued_headings "${WORKSPACE_HOST}/${slug}/report.md"
   if check_report_sections "${WORKSPACE_HOST}/${slug}/report.md"; then
@@ -321,5 +200,5 @@ rm -f "${WORKSPACE_HOST}/${slug}/report.part1"
 
 echo ""
 echo "[research] done."
-echo "  container:  ${REPORT}"
+echo "  container:  /workspace/${slug}/report.md"
 echo "  host:       ${WORKSPACE_HOST}/${slug}/report.md"

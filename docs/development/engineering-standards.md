@@ -80,8 +80,9 @@ Implementation status (in `scripts/research_lib.sh` + `scripts/research_eval.py`
 
 ### D4 — One dialect per tool; prompt↔tool contracts are machine-checked
 
-A tool accepts one notation (`^`, not `**`; `mode=`, not `write:`). Every
-example the prompt teaches the model must be machine-checked to parse and
+A tool teaches the model one canonical notation (`^`, not `**`; `mode=`, not
+`write:`) — even when the tool happens to also accept a non-canonical form.
+Every example the prompt teaches the model must be machine-checked to parse and
 evaluate against the real tool (`tests/pipeline/test_prompt_calculator_contract.py`
 extracts every `calculator(expression=...)` from the prompts and evaluates
 it). This would have caught the `**` regression before the first live run.
@@ -123,12 +124,48 @@ validator, tool gate, snapshot, feedback keyword, normalize hook). Bash
 scripts are thin launchers that render a typed spec; orchestration logic
 lives in typed Python.
 
+Implementation status (in `scripts/research_phases.py` + `scripts/research.sh`):
+- `PhaseSpec` (a frozen dataclass) and the `PHASES` registry carry every
+  phase field; `Ctx.from_env()` reads the launcher-injected context
+  (`OJ_TOPIC/OJ_SLUG/OJ_WORKSPACE_HOST/OJ_STATE_DIR/OJ_AGENT_NAME`,
+  optional `OJ_MIN_ARTIFACT_SIZE`).
+- `run_phase(spec, ctx)` owns the retry loop (MAX_ATTEMPTS=3), the artifact
+  size gate, the validator call, the `tool:min` usage gate over the asklog,
+  the optional snapshot restore and normalize hook, and the TDL feedback
+  write (success high, failure low) — all in typed Python.
+- `scripts/research.sh` is a thin launcher: `run_phase <gather|verify|part1|part2>`
+  exports the env and delegates to `python3 scripts/research_phases.py run --phase …`;
+  the phase-specific degrade branches (VERIFY → UNVERIFIED banner, 3b →
+  heading repair + NOTE/PARTIAL) remain in the launcher.
+- The deterministic leaves the loop calls are still the SAME bash functions
+  in `scripts/research_lib.sh`, invoked through the identical `bash -c` seam
+  the offline harness uses (C4/C5). Stdlib-only: the live pipeline runs this
+  under the host `python3`, which cannot import `openjarvis`.
+- `tests/pipeline/test_orchestration.py` drives the whole loop with an
+  injected fake `ask` (zero model calls) against real trace-derived
+  artifacts: first-try success, retry-then-success, fail-after-3, tool-gate
+  retry, normalize repair, snapshot restore, and feedback DB writes.
+
 ### C2 — Prompts are code
 
 Prompts are versioned template files, rendered through a typed function —
 never inline shell strings, and never nested quoting
 (`bash → make CMD= → docker exec → CLI`). Prompt changes ship with a test
 that extracts and validates every tool-call example they contain (D4).
+
+Implementation status (in `scripts/prompts/*.txt` + `scripts/research_phases.py`):
+- The four phase prompts are versioned files
+  (`phase1_gather.txt`, `phase2_verify.txt`, `phase3a_report_part1.txt`,
+  `phase3b_report_part2.txt`); `research.sh` carries no prompt text at all.
+- `render_prompt(name, vars)` renders them via `string.Template` and fails
+  loudly on a missing placeholder or a stray `$`; `tests/pipeline/test_orchestration.py`
+  pins that every `$` in every template is one of the four known placeholders
+  and that each phase renders with its real container paths.
+- `tests/pipeline/test_prompt_calculator_contract.py` scans the templates
+  (not inline strings) for `calculator(expression=...)` examples and
+  evaluates each with the production `safe_eval`; it also asserts the VERIFY
+  prompt teaches `^` as the canonical dialect and does not claim the tool
+  rejects `**` (the reword that shipped with the `**`-accepting backend).
 
 ### C3 — Every production failure becomes a regression test at the failing layer
 

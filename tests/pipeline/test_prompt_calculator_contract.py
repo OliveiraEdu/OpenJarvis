@@ -1,10 +1,11 @@
 """D4 — one dialect per tool; prompt<->tool contracts are machine-checked.
 
 Every ``calculator(expression=...)`` example the model is taught (in the
-phase prompts and in the frozen trace-derived asklog) must evaluate with the
-production safe_eval. This would have caught the ``**`` regression (the Rust
-meval backend rejects ``**``) BEFORE the first live run, and it guards the
-prompt text from silently drifting back to a dialect the tool rejects.
+versioned phase-prompt templates under ``scripts/prompts/`` and in the frozen
+trace-derived asklogs) must evaluate with the production safe_eval. This
+would have caught the ``**`` regression (the Rust meval backend rejected
+``**``) BEFORE the first live run, and it guards the prompt text from
+silently drifting back to a dialect the tool rejects.
 """
 
 from __future__ import annotations
@@ -19,18 +20,21 @@ from openjarvis.tools.calculator import safe_eval
 EXPR_RE = re.compile(r"calculator\(expression=['\"]([^'\"]+)['\"]")
 ASKLOG_EXPR_RE = re.compile(r"calculator expression=([^\n]+)")
 
-# The phase prompts are where the model is explicitly taught calculator
-# notation; the template names the tool but teaches no dialect.
-RESEARCH_SH = REPO_ROOT / "scripts" / "research.sh"
+# Prompts are versioned template files (C2); research.sh itself carries no
+# prompt text anymore. The template names the tool but teaches no dialect.
+PROMPTS_DIR = REPO_ROOT / "scripts" / "prompts"
+PROMPT_FILES = sorted(PROMPTS_DIR.glob("*.txt"))
 TEMPLATE = REPO_ROOT / "deploy" / "templates" / "it_market_analyst.toml"
 
 # One known result to pin exact math (CAGR example from the VERIFY prompt).
 CAGR_EXPR = "((60.12/55.78)^(1/1)-1)*100"
 
 
-def test_calculator_examples_in_research_sh_evaluate():
-    exprs = EXPR_RE.findall(RESEARCH_SH.read_text(encoding="utf-8"))
-    assert exprs, "no calculator(expression=...) examples found in research.sh"
+def test_calculator_examples_in_prompts_evaluate():
+    exprs = [
+        m for f in PROMPT_FILES for m in EXPR_RE.findall(f.read_text(encoding="utf-8"))
+    ]
+    assert exprs, "no calculator(expression=...) examples found in scripts/prompts/"
     for expr in exprs:
         assert safe_eval(expr) is not None
 
@@ -44,8 +48,9 @@ def test_template_mentions_calculator_without_teaching_dialect():
 
 
 def test_prompts_never_teach_double_asterisk():
-    """The Rust backend rejects ``**``; the prompt dialect must use ``^``."""
-    for src in (RESEARCH_SH, TEMPLATE):
+    """The canonical prompt dialect is ``^``; ``**`` is accepted by the tool
+    but must never be taught as the dialect (D4 — one dialect per tool)."""
+    for src in [*PROMPT_FILES, TEMPLATE]:
         text = src.read_text(encoding="utf-8")
         for match in EXPR_RE.finditer(text):
             assert "**" not in match.group(1), (
@@ -56,6 +61,14 @@ def test_prompts_never_teach_double_asterisk():
 
 def test_verify_prompt_cagr_example_matches_expected_value():
     assert safe_eval(CAGR_EXPR) == pytest.approx(7.78, abs=0.01)
+
+
+def test_verify_prompt_teaches_canonical_dialect():
+    """Gap fix: the prompt must not claim the tool rejects ``**`` (it no
+    longer does) and must keep teaching ``^`` as canonical."""
+    verify = (PROMPTS_DIR / "phase2_verify.txt").read_text(encoding="utf-8")
+    assert "which it rejects" not in verify
+    assert "canonical dialect" in verify
 
 
 def test_trace_asklog_calculator_expression_evaluates():
