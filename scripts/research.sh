@@ -20,7 +20,13 @@
 #                      Trace-Driven Learning loop (Phase B of the TDL work).
 #
 # Each phase is checked for its artifact file (one retry per phase), so a
-# shortcutting model cannot silently return without the deliverable.
+# shortcutting model cannot silently return without the deliverable. Phase 2
+# (VERIFY) degrades instead of aborting: if the calculator tool gate cannot
+# be met after retries, numbers.md is marked UNVERIFIED and the run
+# continues, so a weak VERIFY phase cannot throw away the GATHER work.
+#
+# Phase B feedback is written for every phase outcome — high on success
+# (retries, artifact size), low on gate failure — feeding the TDL loop.
 #
 # Reports land in the container workspace /workspace/<slug>/ which is
 # bind-mounted to the host workspace (default ~/Git/openjarvis-workspace).
@@ -172,6 +178,11 @@ run_phase() {
     fi
     if [ "$attempt" -ge 3 ]; then
       echo "[research] ERROR: ${label} did not produce a valid $host_artifact after ${attempt} attempts." >&2
+      # Record a low feedback score on the failing trace so the TDL loop
+      # sees the failure (score floor well below any passing phase).
+      if [ -n "$fb_keyword" ]; then
+        record_feedback "$label" "$fb_keyword" "$attempt" "$host_artifact" no
+      fi
       return 1
     fi
     echo "[research] artifact missing, too small, failing validation, or tool gate unmet ($host_artifact); retrying..."
@@ -186,7 +197,7 @@ run_phase() {
 # produced the artifact. Phase A made this possible: the trace's query now
 # carries the phase prompt, so the right trace is located by keyword.
 record_feedback() {
-  local label="$1" keyword="$2" attempts="$3" artifact="$4"
+  local label="$1" keyword="$2" attempts="$3" artifact="$4" passed="${5:-yes}"
   local size attempts_bonus size_bonus score agent_uuid
   size="$(stat -c%s "$artifact" 2>/dev/null || echo 0)"
   case "$attempts" in
@@ -201,8 +212,15 @@ record_feedback() {
   else
     size_bonus=0.0
   fi
-  # base 0.6 = passed every gate (artifact present + validator + tool gate)
-  score="$(python3 -c "print(f'{min(1.0, 0.6 + $attempts_bonus + $size_bonus):.3f}')")"
+  if [ "$passed" = "no" ]; then
+    # Failed phase: workflow contract violated (e.g. tool gate unmet).
+    # Keep the score low and well below any passing phase, regardless of
+    # artifact size — size alone must never mask a broken workflow.
+    score="$(python3 -c "print(f'{min(0.3, 0.2 + $size_bonus):.3f}')")"
+  else
+    # base 0.6 = passed every gate (artifact present + validator + tool gate)
+    score="$(python3 -c "print(f'{min(1.0, 0.6 + $attempts_bonus + $size_bonus):.3f}')")"
+  fi
   agent_uuid="$(
     python3 -c "import sqlite3; print(sqlite3.connect('$STATE_DIR/agents.db').execute(\"select id from managed_agents where name=? and status != 'archived' order by last_run_at desc limit 1\", ('$AGENT_NAME',)).fetchone()[0])" 2>/dev/null || true
   )"
@@ -278,9 +296,20 @@ run_phase "phase 1 (gather)" \
   "${WORKSPACE_HOST}/${slug}/findings.md" true "web_search:2" "" "GATHER FACTS" || exit 1
 
 # ── 6. Phase 2 — VERIFY (math consistency, artifact-enforced)
-run_phase "phase 2 (verify)" \
-  "VERIFY THE NUMBERS. Topic: ${TOPIC}. Do this now: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, run the calculation through the calculator tool (e.g. CAGR = ((end/start)^(1/years)-1)*100; projection = start*(1+r)^years). If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) Write the verified figures to ${NUMBERS} using ONE file_write (mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. (4) Reply with just 'done' and the path. Do NOT write the report yet." \
-  "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" "" "VERIFY THE NUMBERS" || exit 1
+if ! run_phase "phase 2 (verify)" \
+  "VERIFY THE NUMBERS WITH THE CALCULATOR TOOL. Topic: ${TOPIC}. CRITICAL: this phase is machine-checked — the run is judged FAILED unless the execution log shows you actually CALLED the calculator tool (calculator(expression=...)) at least once. Writing the file without calling calculator counts as a failed phase. Do this now, in order: (1) Read ${FINDINGS} with file_read. (2) For EVERY CAGR, projection, and market-share figure in the findings, call the calculator tool with the math expression and READ the returned result before continuing — e.g. calculator(expression='((79.81/43.19)**(1/5)-1)*100') for a CAGR, calculator(expression='100*(1+0.15)**5') for a projection. If a claimed CAGR does not match the stated size figures, note the discrepancy. (3) ONLY AFTER all calculations are done, write the verified figures to ${NUMBERS} using ONE file_write (mode='write', create_dirs=true): a compact markdown table with one row per figure — columns: metric | base year | end year | source | formula | computed result | discrepancy note. (4) Reply with just 'done' and the path. Do NOT write the report yet." \
+  "${WORKSPACE_HOST}/${slug}/numbers.md" check_numbers_table "calculator:1" "" "VERIFY THE NUMBERS"; then
+  # Degrade, don't abort: a weak VERIFY phase must not throw away the GATHER
+  # work. Prepend an explicit UNVERIFIED banner to numbers.md so the report
+  # phases (and the reader) can see the figures were never calculator-checked.
+  echo "[research] WARNING: phase 2 (verify) failed after retries — continuing with figures marked UNVERIFIED."
+  numbers_host="${WORKSPACE_HOST}/${slug}/numbers.md"
+  {
+    printf '> **UNVERIFIED** — the calculator tool was not used during VERIFY; every figure below is model-stated only. Re-run verification before relying on any number.\n\n'
+    [ -f "$numbers_host" ] && cat "$numbers_host"
+  } > "${numbers_host}.tmp" && mv "${numbers_host}.tmp" "$numbers_host"
+  echo "[research] ${numbers_host} marked as UNVERIFIED."
+fi
 
 # ── 7. Phase 3a — REPORT part 1 (Title..Detailed Analysis, chunked writes)
 run_phase "phase 3a (report part 1)" \
