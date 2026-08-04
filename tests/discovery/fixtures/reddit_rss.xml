@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <entry>
+    <id>https://www.reddit.com/r/devops/comments/abc123/migrating_off_terraform/</id>
+    <title>Migrating off Terraform after the license change</title>
+    <author><name>devops_joe</name></author>
+    <updated>2026-07-29T10:00:00+00:00</updated>
+  </entry>
+  <entry>
+    <id>https://www.reddit.com/r/devops/comments/def456/k8s_is_too_expensive/</id>
+    <title>Kubernetes is getting too expensive for small teams</title>
+    <author><name>platform_eng</name></author>
+    <updated>2026-07-29T11:00:00+00:00</updated>
+  </entry>
+</feed>

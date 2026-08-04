@@ -1,0 +1,25 @@
+{
+  "hits": [
+    {
+      "objectID": "42424242",
+      "title": "Postgres is eating the database world",
+      "url": "https://example.com/postgres-eating",
+      "points": 321,
+      "num_comments": 45,
+      "created_at": "2026-07-29T08:00:00.000Z",
+      "author": "pgfan"
+    },
+    {
+      "objectID": "42424243",
+      "title": "Show HN: A vector database in 500 lines",
+      "url": null,
+      "points": 87,
+      "num_comments": 12,
+      "created_at": "2026-07-29T09:00:00.000Z",
+      "author": "builder"
+    }
+  ],
+  "nbHits": 2,
+  "page": 0,
+  "nbPages": 1
+}

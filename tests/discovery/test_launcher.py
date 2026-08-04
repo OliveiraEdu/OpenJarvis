@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import subprocess
 
-from helpers import DISCOVERY_DIR, LAUNCHER, REPO_ROOT, run_launcher
+from helpers import DISCOVERY_DIR, LAUNCHER, run_launcher
 
 
 def test_launcher_is_shellcheck_clean():
@@ -22,12 +22,15 @@ def test_launcher_is_shellcheck_clean():
         assert proc.returncode == 0, proc.stderr
 
 
-def test_cycle_with_empty_registry_is_honest_noop(tmp_path):
-    """M1 has no collectors wired: the cycle must say so (D6), create the
-    signals.db, and still report counts — never pretend it collected."""
-    proc = run_launcher("run", "--cycle", state_dir=tmp_path)
+def test_cycle_offline_mode_is_honest(tmp_path):
+    """OJ_OFFLINE=1 keeps the launcher-level cycle offline: it must say so
+    (D6), create the signals.db, and report zero counts — never a network
+    call and never a fake collect."""
+    proc = run_launcher(
+        "run", "--cycle", state_dir=tmp_path, env_extra={"OJ_OFFLINE": "1"}
+    )
     assert proc.returncode == 0, proc.stderr
-    assert "no collectors registered yet" in proc.stdout
+    assert "offline mode" in proc.stdout
     assert "total=0 NEW=0" in proc.stdout
     assert (tmp_path / "signals.db").is_file()
 
@@ -42,6 +45,20 @@ def test_unknown_source_is_a_usage_error(tmp_path):
     proc = run_launcher("run", "--source", "nope", state_dir=tmp_path)
     assert proc.returncode == 2
     assert "not registered" in proc.stdout
+
+
+def test_disabled_placeholder_source_is_a_usage_error(tmp_path):
+    """Placeholders are registered but disabled (design §4.3): asking for one
+    by --source is a usage error, not a silent no-op."""
+    proc = run_launcher(
+        "run",
+        "--source",
+        "sec_edgar",
+        state_dir=tmp_path,
+        env_extra={"OJ_OFFLINE": "1"},
+    )
+    assert proc.returncode == 2
+    assert "not enabled" in proc.stdout
 
 
 def test_run_lock_defers_concurrent_cycle(tmp_path):

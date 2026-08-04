@@ -1,0 +1,32 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "id": 900001,
+      "full_name": "acme/vectordb",
+      "html_url": "https://github.com/acme/vectordb",
+      "stargazers_count": 1234,
+      "forks_count": 89,
+      "open_issues_count": 12,
+      "created_at": "2026-05-01T10:00:00Z",
+      "pushed_at": "2026-07-30T10:00:00Z",
+      "language": "Rust",
+      "license": {"spdx_id": "Apache-2.0"},
+      "owner": {"login": "acme", "type": "Organization"}
+    },
+    {
+      "id": 900002,
+      "full_name": "jane/awesome-ai-storage",
+      "html_url": "https://github.com/jane/awesome-ai-storage",
+      "stargazers_count": 120,
+      "forks_count": 10,
+      "open_issues_count": 2,
+      "created_at": "2026-06-15T10:00:00Z",
+      "pushed_at": "2026-07-28T10:00:00Z",
+      "language": null,
+      "license": null,
+      "owner": {"login": "jane", "type": "User"}
+    }
+  ]
+}

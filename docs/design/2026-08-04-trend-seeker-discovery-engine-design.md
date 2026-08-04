@@ -171,7 +171,7 @@ stdlib-only** (host `python3`), matching C1/C5. `collectors.py` uses
 | GitHub velocity | `api.github.com/search/repositories` (created:>…, stars:>…) | none (10 req/min unauthenticated; `GITHUB_TOKEN` env raises to 30) | **yes** | Star acceleration, contributor spikes, license/fork diversion |
 | Hacker News | Firebase API (`hn.algolia.com`/firebase) + Algolia search | none | **yes** | Keyword velocity, engagement ratio (comments/upvotes) |
 | Reddit RSS | subreddit RSS feeds (`r/devops`, `r/sysadmin`, `r/dataengineering`, `r/LocalLLaMA`) | none (RSS) | **yes** | Churn-phrase regex on titles; **placeholder**: OAuth JSON API for full-text sentiment |
-| PyPI | `pypi.org/pypi/<pkg>/json` for a configured watch-list | none | **yes** | Download delta vs. prior cycle (ADOPTION_SPIKE) |
+| PyPI | `pypi.org/pypi/<pkg>/json` for a configured watch-list | none | **yes** | Download delta vs. prior cycle (ADOPTION_SPIKE). Note: `pypi.org` JSON carries release metadata but no download counts, so deltas come from best-effort `pypistats.org/api/packages/<pkg>/recent` (failure drops the metric, D6) |
 | Pricing page diff | `urllib` fetch + normalized hash per watched URL | none | **yes** (static HTML only) | Any change → PRICING_DIFF candidate; **placeholder**: headless-browser rendering for JS pages |
 | SEC EDGAR | `data.sec.gov` | rate-limited | no | **Placeholder**: 10-K/10-Q risk-factor diffing |
 | Job boards | — | auth/varied | no | **Placeholder**: keyword-spike tracking |

@@ -1,0 +1,13 @@
+{
+  "info": {
+    "name": "pgvector",
+    "version": "0.8.1",
+    "summary": "Open-source vector similarity search for Postgres",
+    "requires_python": ">=3.8"
+  },
+  "releases": {
+    "0.8.1": [{"upload_time": "2026-07-01T12:00:00"}],
+    "0.7.0": [{"upload_time": "2026-03-01T12:00:00"}]
+  },
+  "urls": []
+}
