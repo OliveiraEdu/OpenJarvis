@@ -265,3 +265,4 @@ application code), verify each item:
 - [Design principles](../architecture/design-principles.md) — the framework's eight principles.
 - [Learning architecture](../architecture/learning.md) — the Trace-Driven Learning loop the pipeline's feedback feeds.
 - [Roadmap](roadmap.md) — post-training from execution traces (the consumer for recorded signals).
+- [Trend Seeker design](../design/2026-08-04-trend-seeker-discovery-engine-design.md) — the market-signal discovery engine that builds on the pipeline and maps each standard to the design element honoring it.
