@@ -14,9 +14,10 @@ which cannot import ``openjarvis``.
 from __future__ import annotations
 
 import os
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import tomllib
 
 DEFAULT_THRESHOLD = 7
 DEFAULT_MAX_TRIGGERS_PER_DAY = 3
@@ -24,6 +25,47 @@ DEFAULT_SUBJECT_TEMPLATE = "{title} | Scope: {category}"
 DEFAULT_COOLDOWN_SECONDS = 86400  # 24 h fallback for unlisted sources
 
 CONFIG_FILE = Path(__file__).resolve().parent / "config.toml"
+
+
+@dataclass(frozen=True)
+class GithubSettings:
+    """scripts/discovery config [collectors.github] (design §4.3)."""
+
+    q: str = "ai OR llm OR storage"
+    min_stars: int = 50
+    created_days: int = 90
+    max_repos: int = 20
+
+
+@dataclass(frozen=True)
+class HNSettings:
+    q: str = "postgres OR kubernetes OR llm"
+    min_points: int = 50
+    max_items: int = 20
+
+
+@dataclass(frozen=True)
+class RedditSettings:
+    subreddits: tuple[str, ...] = (
+        "devops",
+        "sysadmin",
+        "dataengineering",
+        "LocalLLaMA",
+    )
+    max_items: int = 15
+
+
+@dataclass(frozen=True)
+class PyPISettings:
+    packages: tuple[str, ...] = ("pgvector", "ollama", "dask")
+
+
+@dataclass(frozen=True)
+class PricingSettings:
+    urls: tuple[str, ...] = (
+        "https://cloud.google.com/pricing",
+        "https://azure.microsoft.com/en-us/pricing/",
+    )
 
 
 @dataclass(frozen=True)
@@ -35,6 +77,11 @@ class DiscoveryConfig:
     subject_template: str
     cooldown_seconds: dict[str, int] = field(default_factory=dict)
     enabled_collectors: tuple[str, ...] = ()
+    github: GithubSettings = field(default_factory=GithubSettings)
+    hn: HNSettings = field(default_factory=HNSettings)
+    reddit: RedditSettings = field(default_factory=RedditSettings)
+    pypi: PyPISettings = field(default_factory=PyPISettings)
+    pricing: PricingSettings = field(default_factory=PricingSettings)
 
     def cooldown_for(self, source: str) -> int:
         return self.cooldown_seconds.get(source, DEFAULT_COOLDOWN_SECONDS)
@@ -52,6 +99,7 @@ class Ctx:
     state_dir: Path
     workspace: Path
     root: Path
+    offline: bool = False
 
     @classmethod
     def from_env(cls) -> "Ctx":
@@ -62,7 +110,10 @@ class Ctx:
                 "OJ_WORKSPACE_HOST", Path.home() / "Git" / "openjarvis-workspace"
             )
         )
-        return cls(state_dir=state_dir, workspace=workspace, root=root)
+        # OJ_OFFLINE=1 skips network collectors — air-gapped cycles and the
+        # offline test harness, mirroring OJ_SKIP_SANITY in research.sh.
+        offline = os.environ.get("OJ_OFFLINE", "") == "1"
+        return cls(state_dir=state_dir, workspace=workspace, root=root, offline=offline)
 
     @property
     def signals_db(self) -> Path:
@@ -92,12 +143,64 @@ def load_config(path: Path | None = None) -> DiscoveryConfig:
             f"discovery.max_triggers_per_day must be >= 0, got {max_triggers}"
         )
 
+    def _pos_int(section: str, key: str, default: int, what: str) -> int:
+        value = int((collectors.get(section, {}) or {}).get(key, default))
+        if value <= 0:
+            raise ValueError(
+                f"collectors.{section}.{key} must be > 0 ({what}), got {value}"
+            )
+        return value
+
+    def _tuple(section: str, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        raw = (collectors.get(section, {}) or {}).get(key)
+        if raw is None:
+            return default
+        return tuple(str(item) for item in raw)
+
     return DiscoveryConfig(
         threshold=threshold,
         max_triggers_per_day=max_triggers,
         subject_template=str(d.get("subject_template", DEFAULT_SUBJECT_TEMPLATE)),
         cooldown_seconds={str(k): int(v) for k, v in cooldown.items()},
         enabled_collectors=tuple(str(name) for name in collectors.get("enabled", [])),
+        github=GithubSettings(
+            q=str(
+                (collectors.get("github", {}) or {}).get("q", "ai OR llm OR storage")
+            ),
+            min_stars=_pos_int("github", "min_stars", 50, "minimum stars"),
+            created_days=_pos_int("github", "created_days", 90, "created-window days"),
+            max_repos=_pos_int("github", "max_repos", 20, "max repos per cycle"),
+        ),
+        hn=HNSettings(
+            q=str(
+                (collectors.get("hn", {}) or {}).get(
+                    "q", "postgres OR kubernetes OR llm"
+                )
+            ),
+            min_points=_pos_int("hn", "min_points", 50, "minimum points"),
+            max_items=_pos_int("hn", "max_items", 20, "max items per cycle"),
+        ),
+        reddit=RedditSettings(
+            subreddits=_tuple(
+                "reddit",
+                "subreddits",
+                ("devops", "sysadmin", "dataengineering", "LocalLLaMA"),
+            ),
+            max_items=_pos_int("reddit", "max_items", 15, "max items per subreddit"),
+        ),
+        pypi=PyPISettings(
+            packages=_tuple("pypi", "packages", ("pgvector", "ollama", "dask")),
+        ),
+        pricing=PricingSettings(
+            urls=_tuple(
+                "pricing",
+                "urls",
+                (
+                    "https://cloud.google.com/pricing",
+                    "https://azure.microsoft.com/en-us/pricing/",
+                ),
+            ),
+        ),
     )
 
 
@@ -106,5 +209,10 @@ __all__ = [
     "Ctx",
     "DEFAULT_COOLDOWN_SECONDS",
     "DiscoveryConfig",
+    "GithubSettings",
+    "HNSettings",
+    "PricingSettings",
+    "PyPISettings",
+    "RedditSettings",
     "load_config",
 ]

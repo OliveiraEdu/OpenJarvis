@@ -21,3 +21,35 @@ pricing = 604800           # 7 d
 
 [collectors]
 enabled = ["github", "hn", "reddit", "pypi", "pricing"]
+
+[collectors.github]
+# Topic terms; the collector appends `created:>…` and `stars:>…` filters
+# derived from the cycle timestamp (design §4.3, C5).
+q = "ai OR llm OR storage"
+min_stars = 50
+created_days = 90
+max_repos = 20
+
+[collectors.hn]
+q = "postgres OR kubernetes OR llm"
+min_points = 50
+max_items = 20
+
+[collectors.reddit]
+# Churn-phrase regex on titles happens in rules (M3), not here.
+subreddits = ["devops", "sysadmin", "dataengineering", "LocalLLaMA"]
+max_items = 15
+
+[collectors.pypi]
+# Metadata from pypi.org/pypi/<pkg>/json; best-effort download stats from
+# pypistats.org (pypi.org json carries no download counts).
+packages = ["pgvector", "ollama", "dask"]
+
+[collectors.pricing]
+# Static HTML watch-list; any normalized-content change becomes a
+# PRICING_DIFF pre-qualification in rules (M3). JS-rendered pages are the
+# headless-browser placeholder (design §4.3).
+urls = [
+  "https://cloud.google.com/pricing",
+  "https://azure.microsoft.com/en-us/pricing/",
+]
