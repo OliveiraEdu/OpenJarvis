@@ -2,12 +2,14 @@
 """Discovery engine CLI — the cycle orchestrator.
 
 Pipeline (design §4.2): collect -> filter -> store -> triage -> decide ->
-trigger. M2 wires the v1 collectors (github, hn, reddit, pypi, pricing) and
-registers the placeholders; rules, triage, and decide land in M3-M5.
+trigger. M2 wired the v1 collectors (github, hn, reddit, pypi, pricing) plus
+placeholders; M3 wired the filter stage (noise drop + pre_qualify tags).
+Triage (M4) and the decide/trigger wiring (M4/M5) follow.
 
 The cycle is honest (D6): per-source failures are counted, never fatal;
-offline mode (``OJ_OFFLINE=1``) skips network collectors; a source listed in
-config but not registered/enabled is reported, not silently dropped.
+noise is filtered before storage; offline mode (``OJ_OFFLINE=1``) skips
+network collectors; a source listed in config but not registered/enabled is
+reported, not silently dropped.
 
 Stdlib-only (host python3, no openjarvis import) — same constraint as the
 research pipeline.
@@ -21,6 +23,7 @@ from datetime import datetime, timezone
 
 import collectors
 import config
+import rules
 import store as store_mod
 
 
@@ -73,12 +76,14 @@ def run_cycle(
         if not enabled:
             print("[discovery] no enabled collectors in this cycle")
 
+        now = _now()  # one cycle timestamp: collectors and rules share it (C5)
         collected = 0
+        noise = 0
         failed = 0
         for name in enabled:
             collector = registry[name]
             try:
-                signals = collector.fetch(_now())
+                signals = collector.fetch(now)
             except Exception as exc:  # per-source failures are counted, not fatal
                 print(
                     f"[discovery] collector '{name}' failed:"
@@ -87,13 +92,20 @@ def run_cycle(
                 failed += 1
                 continue
             for sig in signals:
+                if rules.noise_filters(sig):
+                    noise += 1
+                    continue
+                # The stored row is the previous cycle's snapshot until the
+                # upsert refreshes it — that is the delta baseline (rules §4.4).
+                prior = st.get(sig.source, sig.source_key)
+                sig.pre_qualify = ",".join(rules.pre_qualify(sig, prior, now=now))
                 st.upsert(sig)
                 collected += 1
 
         stats = st.stats()
         summary = (
-            f"[discovery] cycle complete: collected={collected} failed={failed}"
-            f" total={stats['total']}"
+            f"[discovery] cycle complete: collected={collected} noise={noise}"
+            f" failed={failed} total={stats['total']}"
             f" NEW={stats['NEW']} TRIAGED={stats['TRIAGED']}"
             f" TRIGGERED={stats['TRIGGERED']} DONE={stats['DONE']}"
             f" FAILED={stats['FAILED']}"

@@ -310,8 +310,10 @@ def test_cycle_stores_collected_signals(tmp_path):
     assert rc == 0
     with store_mod.SignalStore(tmp_path / "signals.db") as st:
         stats = st.stats()
-    assert stats["total"] == 4
-    assert stats["NEW"] == 4
+    # 2 hn stories + acme/vectordb; jane/awesome-ai-storage is noise (curated
+    # list) and is filtered before storage (rules.noise_filters).
+    assert stats["total"] == 3
+    assert stats["NEW"] == 3
 
 
 def test_cycle_reports_collector_failure_not_fatal(tmp_path, capsys):
@@ -321,7 +323,7 @@ def test_cycle_reports_collector_failure_not_fatal(tmp_path, capsys):
     assert rc == 0  # a failing source never kills the cycle (D6)
     out = capsys.readouterr().out
     assert "collector 'github' failed: FetchError: rate limited" in out
-    assert "collected=0 failed=1" in out
+    assert "collected=0 noise=0 failed=1" in out
 
 
 def test_cycle_offline_mode_skips_collectors(tmp_path, capsys):
@@ -333,7 +335,7 @@ def test_cycle_offline_mode_skips_collectors(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "offline mode" in out
-    assert "collected=0 failed=0" in out
+    assert "collected=0 noise=0 failed=0" in out
 
 
 def test_cycle_reports_config_source_not_registered(tmp_path, capsys):
