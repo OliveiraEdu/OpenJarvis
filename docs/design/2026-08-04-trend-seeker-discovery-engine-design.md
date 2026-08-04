@@ -125,12 +125,14 @@ scripts/discovery/
                       decide → trigger; CLI:  run --cycle / run --once [--source X]
   config.toml         committed defaults: thresholds, enable flags, cadence,
                       subject template, caps (no secrets)
+  config.py           typed frozen dataclasses parsing config.toml (C1); Ctx.from_env
   collectors.py       one Collector per source (dataclass + fetch() -> list[Signal])
   rules.py            pure functions: evaluate(signal, metrics) -> pass|skip|pre_qualify
   store.py            signals.db schema + dedupe + queries (sqlite3, stdlib)
   triage.py           builds prompt from triage_prompt.txt, calls jarvis ask via
                       the make jarvis-exec seam, parses/validates JSON reply
-  decide.py           thresholds, per-source cooldown, daily cap, run-lock
+  decide.py           thresholds, per-source cooldown, daily cap (run-lock is
+                      launcher-side, in discovery.sh)
   prompts/triage_prompt.txt   string.Template, rendered newline-free (C2)
 tests/discovery/      offline harness (fixtures + fake network layer)
 tests/discovery/fixtures/     canned GitHub/HN/Reddit/PyPI payloads (C3)

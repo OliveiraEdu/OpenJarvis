@@ -1,0 +1,23 @@
+# Trend Seeker — Discovery Engine defaults (committed, no secrets).
+#
+# Machine-specific paths never appear here (C7): the state dir and workspace
+# come from env (OJ_STATE_DIR / OJ_WORKSPACE_HOST), exactly like research.sh.
+# Secrets (e.g. a GitHub token for rate-limit headroom) live only in
+# gitignored env files — never in this file, never in fixtures.
+
+[discovery]
+threshold = 7              # LLM relevance score (1-10) above which a signal
+                           # triggers a deep-dive run (design §4.7)
+max_triggers_per_day = 3   # global cap protecting the single engine
+subject_template = "{title} | Scope: {category}"   # research.sh topic at trigger time
+
+[cooldown]
+# Per-source seconds between triggers (design §4.7 defaults).
+github  = 86400            # 24 h
+hn      = 43200            # 12 h
+reddit  = 86400            # 24 h
+pypi    = 604800           # 7 d
+pricing = 604800           # 7 d
+
+[collectors]
+enabled = ["github", "hn", "reddit", "pypi", "pricing"]
