@@ -1,0 +1,18 @@
+{
+  "agent": "2c528b5212fd",
+  "ended_at": "2026-08-04T15:26:52.654706+00:00",
+  "engine": "instrumented",
+  "feedback": 0.9,
+  "model": "gemma4:31b",
+  "outcome": "success",
+  "query_snippet": "GATHER FACTS. Topic: Subject: Storage systems for AI training pipelines | Scope: global, 2026-2030. Work this way, in or",
+  "result_snippet": "Maximum turns reached without a final answer.",
+  "started_at": "2026-08-04T15:25:07.210704+00:00",
+  "tool_call_counts": {
+    "file_write": 2,
+    "web_search": 4
+  },
+  "total_latency_seconds": 105.44400215148926,
+  "total_tokens": 98558,
+  "trace_id": "08a649271cb142de"
+}

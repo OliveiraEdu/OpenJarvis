@@ -55,6 +55,7 @@ ARTIFACT_RUNS = {
     "hpc": "subject-high-performance-computing-serve",
     "arm": "subject-arm-proceesors-cpu-use-on-server",
     "edgeai": "subject-edge-ai-inference-chips-market-s",
+    "storagesys": "subject-storage-systems-for-ai-training-",
 }
 ARTIFACT_FILES = ["findings.md", "numbers.md", "report.md", "report.part1"]
 
@@ -74,9 +75,18 @@ ASKSLOGS = [
     ),  # writes drift to wrong slug -> gate FAILS
     ("edgeai-part1-ok", "4a0a5dad9f3d4ff9"),  # 5 file_write, single path (0.9)
     ("edgeai-part2", "b2165aac5c2f4e3b"),  # 3 appends from part1 snapshot (1.0)
+    # storagesys run, 2026-08-04 (first fully clean end-to-end run: all four
+    # phases first-try, provenance 0/1 unmatched, no glued headings).
+    ("storagesys-gather", "08a649271cb142de"),  # 4 web_search + 2 file_write (0.9)
+    (
+        "storagesys-verify",
+        "6ca6bd98241a404d",
+    ),  # file_read + 2 calculator + 1 write (0.9)
+    ("storagesys-part1", "5c3a606a5bb041e3"),  # 3 file_write, single path (0.9)
+    ("storagesys-part2", "370cd3c65c74462a"),  # 3 appends -> gate passes (1.0)
 ]
 
-# Every trace of the HPC run, for the per-trace metadata record.
+# Every phase trace of the exported runs, for the per-trace metadata record.
 TRACE_IDS = [
     "d528115ea38a4fd1",  # gather      (feedback 1.0)
     "65598dcad07343f8",  # verify 1    (degenerate loop)
@@ -95,6 +105,11 @@ TRACE_IDS = [
     "6a1773a2578d44a4",  # 3a attempt continuation (short tick, no artifact)
     "4a0a5dad9f3d4ff9",  # 3a retry      (feedback 0.9)
     "b2165aac5c2f4e3b",  # 3b            (feedback 1.0)
+    # storagesys run traces (2026-08-04, fully clean run).
+    "08a649271cb142de",  # gather        (feedback 0.9)
+    "6ca6bd98241a404d",  # verify        (feedback 0.9)
+    "5c3a606a5bb041e3",  # 3a            (feedback 0.9)
+    "370cd3c65c74462a",  # 3b            (feedback 1.0)
 ]
 
 
@@ -248,13 +263,20 @@ def write_readme(exported: list[str]) -> None:
         "  (`subject-edge-inference-chips-market-s`, dropped `ai-`) so the gate\n"
         "  failed and the run aborted honestly; on retry 3a and 3b passed. The\n"
         "  provenance check flagged 10/10 fabricated report URLs.\n"
+        "- **storagesys/** — `Subject: Storage systems for AI training` run, 2026-08-04\n"
+        "  (workspace `subject-storage-systems-for-ai-training-`). The first fully\n"
+        "  clean end-to-end run: all four phases passed on the first attempt, the\n"
+        "  report contains all six sections, provenance flagged 0/1 fabricated\n"
+        "  URLs (the one `www` link traced back to its source), and no glued\n"
+        "  headings (gather `fix_glued_headings` normalize active). Feedback\n"
+        "  0.9 / 0.9 / 0.9 / 1.0.\n"
         "- **asklogs/** — the `jarvis agents ask` live-trace log per phase, rebuilt\n"
         "  from `trace_steps` in the CLI format (`  \u21b3 <tool> <k=v ...>`); the\n"
         "  tool-usage gate counts these lines. `verify-degenerate.txt` preserves the\n"
         "  historical broken `**` calculator expression as a regression fixture.\n"
         "- **traces/** — per-trace metadata (outcome, feedback, tokens, tool-call\n"
-        "  histogram) for all nine HPC-run traces; the ground truth the asklogs and\n"
-        "  artifact fixtures derive from.\n"
+        "  histogram) for every phase trace of the hpc, edgeai, and storagesys\n"
+        "  runs; the ground truth the asklogs and artifact fixtures derive from.\n"
         "\n"
         "## Refresh\n"
         "\n"

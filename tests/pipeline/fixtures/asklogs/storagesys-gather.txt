@@ -1,0 +1,10 @@
+  ↳ web_search query=storage systems for AI training pipeline max_results=1
+  ↳ web_search query=storage systems for AI training pipeline max_results=1
+  ↳ web_search query=storage systems for AI training pipeline max_results=1
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=## Findings
+
+### AI Infrastructure Marke
+  ↳ web_search query=storage systems for AI training pipeline max_results=1
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=## Findings
+
+### AI Infrastructure Marke

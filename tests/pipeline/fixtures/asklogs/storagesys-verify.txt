@@ -1,0 +1,4 @@
+  ↳ file_read path=/workspace/subject-storage-systems-for-a max_lines=100
+  ↳ calculator expression=((371.37/132.52)^(1/5)-1)*100
+  ↳ calculator expression=100*(1+0.1874)^5
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=| metric | base year | end year | source

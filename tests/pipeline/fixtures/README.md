@@ -26,13 +26,20 @@ live pipeline uses.
   (`subject-edge-inference-chips-market-s`, dropped `ai-`) so the gate
   failed and the run aborted honestly; on retry 3a and 3b passed. The
   provenance check flagged 10/10 fabricated report URLs.
+- **storagesys/** — `Subject: Storage systems for AI training` run, 2026-08-04
+  (workspace `subject-storage-systems-for-ai-training-`). The first fully
+  clean end-to-end run: all four phases passed on the first attempt, the
+  report contains all six sections, provenance flagged 0/1 fabricated
+  URLs (the one `www` link traced back to its source), and no glued
+  headings (gather `fix_glued_headings` normalize active). Feedback
+  0.9 / 0.9 / 0.9 / 1.0.
 - **asklogs/** — the `jarvis agents ask` live-trace log per phase, rebuilt
   from `trace_steps` in the CLI format (`  ↳ <tool> <k=v ...>`); the
   tool-usage gate counts these lines. `verify-degenerate.txt` preserves the
   historical broken `**` calculator expression as a regression fixture.
 - **traces/** — per-trace metadata (outcome, feedback, tokens, tool-call
-  histogram) for all nine HPC-run traces; the ground truth the asklogs and
-  artifact fixtures derive from.
+  histogram) for every phase trace of the hpc, edgeai, and storagesys
+  runs; the ground truth the asklogs and artifact fixtures derive from.
 
 ## Refresh
 

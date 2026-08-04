@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-from tests.pipeline.helpers import ASKSLOGS, FIXTURES, HPC
+from tests.pipeline.helpers import ASKSLOGS, FIXTURES, HPC, STORAGESYS, run_lib
 
 SECRET_PATTERNS = [
     re.compile(r"tvly-[A-Za-z0-9_-]{10,}"),  # Tavily
@@ -60,9 +60,10 @@ def test_edgeai_slug_drift_asklog_records_mixed_path_writes():
 
 def test_trace_metadata_covers_the_full_run():
     """All committed trace metadata: the nine traces of the HPC-2026-08-03
-    run (gather -> 3x degenerate verify -> 3a -> 3x 3b) plus the seven traces
-    of the edgeai-2026-08-03 run on the typed Python launcher (gather ->
-    verify -> 3x 3a with slug-drift -> retry -> 3b)."""
+    run (gather -> 3x degenerate verify -> 3a -> 3x 3b), the seven traces of
+    the edgeai-2026-08-03 run on the typed Python launcher (gather -> verify
+    -> 3x 3a with slug-drift -> retry -> 3b), and the four traces of the
+    clean storagesys-2026-08-04 run (all phases first-try)."""
     traces = sorted(p.name for p in (FIXTURES / "traces").glob("*.json"))
     assert traces == sorted(
         f"{tid}.json"
@@ -84,6 +85,11 @@ def test_trace_metadata_covers_the_full_run():
             "aff4155eecab4d4f",
             "b2165aac5c2f4e3b",
             "d7b88a51de054c99",
+            # storagesys run
+            "08a649271cb142de",
+            "370cd3c65c74462a",
+            "5c3a606a5bb041e3",
+            "6ca6bd98241a404d",
         ]
     )
 
@@ -100,6 +106,20 @@ def test_hpc_report_preserves_its_flags():
     report = (HPC / "report.md").read_text(encoding="utf-8")
     assert report.startswith("> **UNVERIFIED**")
     assert "PROVENANCE NOTE" in report
+
+
+def test_storagesys_report_preserves_its_clean_run():
+    """The storagesys-2026-08-04 run completed without degradation — all four
+    phases first-try — so its report must stay flag-free and pass the section
+    check exactly as shipped (the clean-run baseline; any future regression
+    that flags or degrades the report flips this test)."""
+    proc = run_lib('check_report_sections "$1"', str(STORAGESYS / "report.md"))
+    assert proc.returncode == 0, proc.stderr
+    report = (STORAGESYS / "report.md").read_text(encoding="utf-8")
+    assert not report.startswith("> **UNVERIFIED**")
+    assert "PROVENANCE NOTE" not in report
+    assert "## Sources & References" in report
+    assert "## Confidence Assessment" in report
 
 
 @pytest.mark.parametrize("pattern", SECRET_PATTERNS, ids=lambda p: p.pattern)

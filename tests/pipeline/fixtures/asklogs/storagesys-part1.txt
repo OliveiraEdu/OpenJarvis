@@ -1,0 +1,13 @@
+  ↳ file_read path=/workspace/subject-storage-systems-for-a max_lines=1000
+  ↳ file_read path=/workspace/subject-storage-systems-for-a max_lines=1000
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=# Storage Systems for AI Training Pipeli
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=
+
+## Executive Summary
+
+The storage syst
+  ↳ file_write path=/workspace/subject-storage-systems-for-a content=
+
+## Detailed Analysis
+
+### Market Overv

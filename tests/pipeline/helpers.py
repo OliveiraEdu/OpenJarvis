@@ -20,6 +20,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 HPC = FIXTURES / "artifacts" / "hpc"
 ARM = FIXTURES / "artifacts" / "arm"
+STORAGESYS = FIXTURES / "artifacts" / "storagesys"
 ASKSLOGS = FIXTURES / "asklogs"
 
 
