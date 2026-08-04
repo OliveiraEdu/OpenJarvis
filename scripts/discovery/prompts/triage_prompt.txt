@@ -1,0 +1,4 @@
+Triage a single IT-market signal for the Trend Seeker discovery engine. Be concise and factual; do not hedge.
+Signal: source=${source}; title=${title}; metrics=${metrics}; known categories: ${category_hint}.
+Rate how strongly this signal indicates a real market move worth a deep-dive research run. Use the full 1-10 scale: low scores for routine or unproven items, high scores only for signals with credible momentum and market impact.
+Reply with ONLY a JSON object: {"relevance_score": <integer 1-10>, "category": "<kebab-case or unknown>", "reason": "<at most 40 chars>"}
