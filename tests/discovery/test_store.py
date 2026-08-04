@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from store import SCHEMA_SQL, Signal, SignalStore, VALID_STATUSES
+from store import SCHEMA_SQL, VALID_STATUSES, Signal, SignalStore
 
 
 @pytest.fixture()

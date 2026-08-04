@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from config import (
     CONFIG_FILE,
     DEFAULT_COOLDOWN_SECONDS,
