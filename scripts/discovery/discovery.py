@@ -4,14 +4,17 @@
 Pipeline (design §4.2): collect -> filter -> store -> triage -> decide ->
 trigger. M2 wired the v1 collectors (github, hn, reddit, pypi, pricing) plus
 placeholders; M3 wired the filter stage (noise drop + pre_qualify tags); M4
-wired the LLM triage stage for pre-qualified signals. The decide/trigger
-wiring (M4/M5) follows.
+wired the LLM triage stage for pre-qualified signals; M5 wired the decide
+stage (SKIP/DEFER/TRIGGER with the re-triage delta) and the research.sh
+trigger seam (design §4.7). The cadence/scheduler wiring (M5) follows.
 
 The cycle is honest (D6): per-source failures are counted, never fatal;
 noise is filtered before storage; offline mode (``OJ_OFFLINE=1``) skips
-network collectors AND triage (no engine); a source listed in config but not
-registered/enabled is reported, not silently dropped; a triage reply that
-fails the JSON contract scores 0 (``parse_failed``) instead of crashing.
+network collectors, triage, AND triggering (no engine); a source listed in
+config but not registered/enabled is reported, not silently dropped; a triage
+reply that fails the JSON contract scores 0 (``parse_failed``) instead of
+crashing; a trigger whose deep-dive run raises is recorded FAILED with a
+reason, never silently skipped.
 
 Stdlib-only (host python3, no openjarvis import) — same constraint as the
 research pipeline.
@@ -26,9 +29,11 @@ from typing import Callable, Optional
 
 import collectors
 import config
+import decide
 import rules
 import store as store_mod
 import triage
+import trigger
 
 
 def _now() -> str:
@@ -43,16 +48,19 @@ def run_cycle(
     once: bool = False,
     source: str | None = None,
     triage_ask: Optional[Callable[[config.Ctx, str], str]] = None,
+    trigger_runner: Optional[trigger.TriggerRunner] = None,
 ) -> int:
     """One discovery cycle. ``once``/``source`` narrow the scope; ``once``
     semantics land with the cadence work (M5).
 
     ``triage_ask`` is the injectable engine seam (C5): tests pass a fake, so
     the cycle never touches the LLM offline. ``None`` means the real seam
-    (``triage.ask_engine``). Triage only runs when NOT offline — the engine
-    is a network/local-LLM call (design §4.6). ``--source`` narrows
-    *collection*; triage still covers every NEW pre-qualified signal, because
-    triage is not a collector.
+    (``triage.ask_engine``). ``trigger_runner`` is the same seam for the
+    deep-dive launch (default ``trigger.launch_research``); tests inject a
+    fake so no research.sh is ever spawned offline. Both stages only run when
+    NOT offline — the engine is a network/local-LLM call (design §4.6/§4.7).
+    ``--source`` narrows *collection*; triage still covers every NEW
+    pre-qualified signal, because triage is not a collector.
     """
     del once  # scheduling semantics arrive in M5; single-pass for now
     if source is not None and source not in registry:
@@ -112,8 +120,20 @@ def run_cycle(
                 # upsert refreshes it — that is the delta baseline (rules §4.4).
                 prior = st.get(sig.source, sig.source_key)
                 sig.pre_qualify = ",".join(rules.pre_qualify(sig, prior, now=now))
-                st.upsert(sig)
+                inserted, sig_id = st.upsert(sig)
                 collected += 1
+                if (
+                    not inserted
+                    and prior is not None
+                    and prior.status == "TRIAGED"
+                    and sig.pre_qualify
+                    and rules.re_triage_needed(sig, prior, cfg.re_triage_delta)
+                ):
+                    # Design §4.7: fractional metric growth past re_triage_delta
+                    # re-opens a TRIAGED item; the triage + decide stages
+                    # re-run it in this same cycle. Only TRIAGED reopens —
+                    # DONE items stay researched (re-trigger is out of scope).
+                    st.set_status(sig_id, "NEW")
 
         # triage stage (M4, design §4.6): pre-qualified NEW signals reach the
         # LLM. Only tagged signals (rules §4.4) are scored; a reply that fails
@@ -138,11 +158,71 @@ def run_cycle(
                 if verdict.reason == triage.PARSE_FAILED:
                     parse_failed += 1
 
+        # decide stage (M5, design §4.7): TRIAGED rows -> TRIGGER/DEFER/SKIP.
+        # The stage re-runs every cycle, so DEFER retries next cycle by
+        # construction (its updated_at is bumped so the retry is observable).
+        # TRIGGER runs the deep-dive through the injectable runner and records
+        # TRIGGERED -> DONE (or FAILED with a reason on a raised runner, D6).
+        # engine_busy is always False: research.sh has no lock file yet (the
+        # §5.7 run-lock is a recorded open item), so it cannot be detected.
+        triggered = 0
+        trigger_failures = 0
+        deferred = 0
+        if not ctx.offline:
+            launch = trigger_runner or trigger.launch_research
+            for sig in st.list_by_status("TRIAGED"):
+                if sig.score is None:
+                    continue  # triage always sets a score; guard anyway (D6)
+                in_cooldown = decide.source_in_cooldown(
+                    now, sig.triggered_at or "", cfg.cooldown_for(sig.source)
+                )
+                cap_reached = decide.daily_cap_reached(
+                    st.count_triggered_today(now), cfg.max_triggers_per_day
+                )
+                verdict = decide.decision(
+                    sig,
+                    threshold=cfg.threshold,
+                    in_cooldown=in_cooldown,
+                    cap_reached=cap_reached,
+                    engine_busy=False,
+                )
+                if verdict == decide.TRIGGER:
+                    topic = trigger.subject_topic(sig, cfg.subject_template)
+                    slug = trigger.slugify(topic)
+                    st.set_status(
+                        sig.id or 0,
+                        "TRIGGERED",
+                        research_slug=slug,
+                        triggered_at=now,
+                    )
+                    triggered += 1
+                    try:
+                        launch(ctx, topic)
+                    except Exception as exc:
+                        # Honest degrade: a failed trigger is recorded FAILED
+                        # with a reason — never silently skipped (D6).
+                        st.set_status(
+                            sig.id or 0,
+                            "FAILED",
+                            triage_reason=(
+                                f"trigger_failed: {type(exc).__name__}: {exc}"
+                            ),
+                        )
+                        trigger_failures += 1
+                    else:
+                        st.set_status(sig.id or 0, "DONE")
+                elif verdict == decide.DEFER:
+                    st.set_status(sig.id or 0, "TRIAGED")
+                    deferred += 1
+                # SKIP: stays TRIAGED with its score; re-decided cheaply next
+                # cycle (score < threshold is final until re-triage re-scores).
+
         stats = st.stats()
         summary = (
             f"[discovery] cycle complete: collected={collected} noise={noise}"
             f" triaged={triaged} parse_failed={parse_failed}"
-            f" failed={failed} total={stats['total']}"
+            f" triggered={triggered} trigger_failures={trigger_failures}"
+            f" deferred={deferred} failed={failed} total={stats['total']}"
             f" NEW={stats['NEW']} TRIAGED={stats['TRIAGED']}"
             f" TRIGGERED={stats['TRIGGERED']} DONE={stats['DONE']}"
             f" FAILED={stats['FAILED']}"
