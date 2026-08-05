@@ -81,7 +81,10 @@ class FakeOpener:
 
 def test_github_collector_parses_search_results():
     opener = FakeOpener(
-        {"api.github.com/search/repositories": _fx("github_search.json")}
+        {
+            "api.github.com/search/repositories": _fx("github_search.json"),
+            "contributors": _fx("github_contributors.json"),
+        }
     )
     col = GithubCollector(GithubSettings(), opener=opener)
     signals = col.fetch(NOW)
@@ -97,8 +100,12 @@ def test_github_collector_parses_search_results():
     assert first.metrics["forks"] == 89
     assert first.metrics["license"] == "Apache-2.0"
     assert first.metrics["owner_type"] == "Organization"
+    # Contributor headroom (design §4.4 contributor_spike): one bounded
+    # request per repo, metric = contributor count.
+    assert first.metrics["contributors"] == 2
+    assert signals[1].metrics["contributors"] == 2
 
-    (req,) = opener.requests
+    req, contrib_1, contrib_2 = opener.requests
     url = req.full_url
     assert "created%3A%3E" in url  # time-derived filter, quoted (C5)
     assert "stars%3A%3E50" in url
@@ -106,6 +113,8 @@ def test_github_collector_parses_search_results():
     assert "sort=stars" in url
     assert req.headers.get("User-agent")  # GitHub requires a UA
     assert req.headers.get("Accept") == "application/vnd.github+json"
+    assert "repos/acme/vectordb/contributors?per_page=30" in contrib_1.full_url
+    assert "repos/jane/awesome-ai-storage/contributors" in contrib_2.full_url
 
 
 def test_github_collector_sends_token_when_env_set(monkeypatch):
@@ -114,6 +123,40 @@ def test_github_collector_sends_token_when_env_set(monkeypatch):
     col = GithubCollector(GithubSettings(), opener=opener)
     col.fetch(NOW)
     assert opener.requests[0].headers.get("Authorization") == "Bearer sekrit"
+    # The per-repo contributor calls ride the same auth header.
+    assert all(
+        r.headers.get("Authorization") == "Bearer sekrit" for r in opener.requests
+    )
+
+
+def test_github_collector_tolerates_contributor_fetch_failure():
+    """A rate-limited/failed contributor call drops the metric, never the
+    repo (D6 best-effort): a repo without the metric simply cannot
+    pre-qualify on contributor_spike."""
+    opener = FakeOpener(
+        {"api.github.com/search/repositories": _fx("github_search.json")},
+        errors={"contributors": FetchError("rate limited")},
+    )
+    col = GithubCollector(GithubSettings(), opener=opener)
+    signals = col.fetch(NOW)
+    assert [s.source_key for s in signals] == [
+        "acme/vectordb",
+        "jane/awesome-ai-storage",
+    ]
+    assert all("contributors" not in s.metrics for s in signals)
+
+
+def test_github_collector_ignores_non_list_contributor_response():
+    """A rate-limit message is a dict, not a list — no bogus metric."""
+    opener = FakeOpener(
+        {
+            "api.github.com/search/repositories": _fx("github_search.json"),
+            "contributors": b'{"message": "API rate limit exceeded"}',
+        }
+    )
+    col = GithubCollector(GithubSettings(), opener=opener)
+    signals = col.fetch(NOW)
+    assert all("contributors" not in s.metrics for s in signals)
 
 
 def test_github_collector_is_idempotent_given_same_now():

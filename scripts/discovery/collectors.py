@@ -42,6 +42,7 @@ from config import (
 from store import Signal
 
 DEFAULT_USER_AGENT = "openjarvis-trend-seeker/0.2 (+local market research)"
+GITHUB_API = "https://api.github.com"
 GITHUB_SEARCH = "https://api.github.com/search/repositories"
 HN_SEARCH = "https://hn.algolia.com/api/v1/search"
 PYPI_JSON = "https://pypi.org/pypi/{pkg}/json"
@@ -171,6 +172,23 @@ class GithubCollector(BaseCollector):
                     },
                 )
             )
+
+        # Contributor headroom (design §4.4 contributor_spike): the search API
+        # does not expose contributor counts, so fetch them per repo. One
+        # bounded request per result (max_repos <= 20). Best-effort (D6): a
+        # rate-limited/failed repo keeps no contributors metric and simply
+        # cannot pre-qualify on that rule.
+        for sig in signals:
+            owner, _, repo = sig.source_key.partition("/")
+            url = f"{GITHUB_API}/repos/{owner}/{repo}/contributors?per_page=30"
+            try:
+                body = self._get(url, headers=headers).decode("utf-8")
+                items = json.loads(body)
+                if isinstance(items, list):
+                    # len caps at 30 (per_page); the >15 threshold is intact.
+                    sig.metrics["contributors"] = len(items)
+            except Exception:
+                pass  # best-effort: no contributors metric (D6)
         return signals
 
 
