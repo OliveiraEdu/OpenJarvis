@@ -414,7 +414,7 @@ hub"`) must stay green; `bash -n` on the new shell scripts.
 | M2 | Collectors v1 | GitHub, HN, Reddit RSS, PyPI, pricing-diff collectors + fixtures + fake-network tests; placeholder stubs registered |
 | M3 | Rules + decide | `rules.py`, `decide.py`, table-driven tests |
 | M4 | Triage | `triage_prompt.txt` (newline-free) + D4 contract test, `triage.py` + seam, parse tests, live-marked smoke |
-| M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9). Remaining: first real payloads exported (Phase C), then unpause + resume cron |
+| M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9, later resolved), Phase C (data loop): per-repo GitHub contributor capture landed so `contributor_spike` can fire (`fdab65d0`), fixture exporter + hygiene tests + first real exported payloads (`d75e9bcb`). Remaining: unpause + resume cron |
 | M6 | Layer 2 | `state.json` in `research_phases.py`, exported fixture, cross-consistency tests |
 | M7 | Docs + calibration | `scripts/discovery/README.md`, engineering-standards "related docs" pointer, roadmap note, `--calibrate` consumer wired (D7) |
 
@@ -460,8 +460,15 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
    `systemctl --user start opencode-job-openjarvis-4f1aad65c715-trend-seeker-discovery.timer`).
    Pricing/pypi stay longer-cooldown by rule, so a 6 h poll is safe.
 5. `state.json` retention vs. cleanup (default: keep as run record).
-6. Discovery fixture exporter sanitization rules — what counts as a "sanitized"
-   signal payload for committed fixtures (C7).
+6. Discovery fixture exporter sanitization rules — **decided (M5):** the
+   exporter (`scripts/export_discovery_fixtures.py`) drops identity fields
+   (`id`, `source_key`, `url`, `research_slug`, `triggered_at`, `created_at`,
+   `updated_at`), keeps a per-source metric whitelist (numeric/date/structural
+   metrics; free-text and identity-bearing values dropped), applies a
+   value-level guard that drops any metric containing a URL or a secret-shaped
+   token, and keeps titles (public content consumed by the rules and the
+   triage prompt). The hygiene test (`tests/discovery/test_fixture_hygiene.py`)
+   keeps the whitelist and the committed fixtures in lockstep.
 7. **Scheduler-plugin unit bug (opencode-scheduler@1.3.0):** its cron→systemd
    translation emits `OnCalendar=* *-*-* HH:00:00`, which systemd 255 rejects
    ("bad unit file setting"), so `schedule_job` registration fails at
@@ -470,10 +477,11 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
    A plugin update must regenerate both.
 8. `engine_busy` in the decide stage is always `False`: `scripts/research.sh`
    has no lock file, so the §5.7 run-lock cannot be detected from the host.
-9. **Sandbox has no outbound DNS** (2026-08-05): live E2E collection blocked
-   (5/5 collectors failed name resolution). The local-engine triage seam was
-   still validated live (pgvector signal → score 7, category `data`); real
-   data collection needs a network-capable host.
+9. ~~Sandbox has no outbound DNS~~ — **resolved (2026-08-05):** the network
+    recovered; the live E2E cycle then collected 28 real signals (github 20,
+    hn 3, pypi 3, pricing 2; reddit 429) and triaged 1 (Azure pricing
+    PRICING_DIFF → score 8, `cloud`) — the payload exported as the first
+    committed fixtures (§7 M5, Phase C). Reddit RSS remains 429 from this host.
 
 ## 11. Standards compliance
 
