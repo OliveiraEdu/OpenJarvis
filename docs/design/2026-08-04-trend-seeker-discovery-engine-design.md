@@ -414,7 +414,7 @@ hub"`) must stay green; `bash -n` on the new shell scripts.
 | M2 | Collectors v1 | GitHub, HN, Reddit RSS, PyPI, pricing-diff collectors + fixtures + fake-network tests; placeholder stubs registered |
 | M3 | Rules + decide | `rules.py`, `decide.py`, table-driven tests |
 | M4 | Triage | `triage_prompt.txt` (newline-free) + D4 contract test, `triage.py` + seam, parse tests, live-marked smoke |
-| M5 | Cadence + auto-trigger | `trend_discovery` template + `jarvis scheduler` cron task, end-to-end manual run, bind-mount resolution, first real payloads exported |
+| M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9). Remaining: first real payloads exported (Phase C), then unpause + resume cron |
 | M6 | Layer 2 | `state.json` in `research_phases.py`, exported fixture, cross-consistency tests |
 | M7 | Docs + calibration | `scripts/discovery/README.md`, engineering-standards "related docs" pointer, roadmap note, `--calibrate` consumer wired (D7) |
 
@@ -443,20 +443,37 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 | Build order | Layer 1 (discovery) then Layer 2 (state handoff) |
 | Collector breadth | v1: GitHub, HN, Reddit RSS, PyPI, static pricing-diff; placeholders for SEC EDGAR, Reddit OAuth, job boards, cloud marketplaces |
 | Trigger mode | Auto — threshold → `scripts/research.sh` headless |
-| Cadence | Jarvis built-in scheduler (cron task + discovery agent template); host-cron fallback noted |
+| Cadence | **Resolved (M5, 2026-08-05):** host-side scheduler-plugin cron (`schedule_job`) calling `discovery.sh run --cycle` directly — the container cannot see `scripts/discovery/` (repo not mounted), so the jarvis-native path is deferred; `deploy/templates/trend_discovery.toml` is registered-ready for when the mount is fixed |
 | Deliverables | Markdown reports (existing pipeline output) |
 
 ## 10. Open items
 
 1. Container bind-mount of `scripts/discovery/` for the scheduler-agent
-   `shell_exec` path (M5).
+   `shell_exec` path (M5). **Confirmed absent (2026-08-05):** the container
+   mounts only `/workspace` (openjarvis-workspace) and the state dir; the repo
+   is not mounted. The native path stays deferred until the mount (or a lean
+   image rebuild) exists; the host-side plugin cron is the adopted fallback.
 2. GitHub token availability (rate-limit upgrade only).
 3. Reddit RSS vs OAuth JSON (v1 uses RSS; OAuth is the placeholder).
-4. Exact cron cadence (default proposal: 6-hourly; pricing/pypi are
-   longer-cooldown by rule, so a 6 h poll is safe).
+4. Exact cron cadence — **decided (M5):** 6-hourly (`0 */6 * * *`), registered
+   as the `trend-seeker-discovery` host job (currently **paused**; resume with
+   `systemctl --user start opencode-job-openjarvis-4f1aad65c715-trend-seeker-discovery.timer`).
+   Pricing/pypi stay longer-cooldown by rule, so a 6 h poll is safe.
 5. `state.json` retention vs. cleanup (default: keep as run record).
 6. Discovery fixture exporter sanitization rules — what counts as a "sanitized"
    signal payload for committed fixtures (C7).
+7. **Scheduler-plugin unit bug (opencode-scheduler@1.3.0):** its cron→systemd
+   translation emits `OnCalendar=* *-*-* HH:00:00`, which systemd 255 rejects
+   ("bad unit file setting"), so `schedule_job` registration fails at
+   `systemctl --user start`. Workaround adopted: hand-written valid timer
+   (`OnCalendar=*-*-* 00,06,12,18:00:00`) + supervisor-compatible job JSON.
+   A plugin update must regenerate both.
+8. `engine_busy` in the decide stage is always `False`: `scripts/research.sh`
+   has no lock file, so the §5.7 run-lock cannot be detected from the host.
+9. **Sandbox has no outbound DNS** (2026-08-05): live E2E collection blocked
+   (5/5 collectors failed name resolution). The local-engine triage seam was
+   still validated live (pgvector signal → score 7, category `data`); real
+   data collection needs a network-capable host.
 
 ## 11. Standards compliance
 
