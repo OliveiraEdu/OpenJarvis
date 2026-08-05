@@ -9,6 +9,8 @@
 threshold = 7              # LLM relevance score (1-10) above which a signal
                            # triggers a deep-dive run (design §4.7)
 max_triggers_per_day = 3   # global cap protecting the single engine
+re_triage_delta = 0.3      # fractional metric growth that re-opens a TRIAGED
+                           # item (design §4.7)
 subject_template = "{title} | Scope: {category}"   # research.sh topic at trigger time
 
 [cooldown]

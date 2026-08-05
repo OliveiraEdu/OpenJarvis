@@ -21,6 +21,7 @@ import tomllib
 
 DEFAULT_THRESHOLD = 7
 DEFAULT_MAX_TRIGGERS_PER_DAY = 3
+DEFAULT_RE_TRIAGE_DELTA = 0.3
 DEFAULT_SUBJECT_TEMPLATE = "{title} | Scope: {category}"
 DEFAULT_COOLDOWN_SECONDS = 86400  # 24 h fallback for unlisted sources
 
@@ -75,6 +76,7 @@ class DiscoveryConfig:
     threshold: int
     max_triggers_per_day: int
     subject_template: str
+    re_triage_delta: float = DEFAULT_RE_TRIAGE_DELTA
     cooldown_seconds: dict[str, int] = field(default_factory=dict)
     enabled_collectors: tuple[str, ...] = ()
     github: GithubSettings = field(default_factory=GithubSettings)
@@ -136,11 +138,17 @@ def load_config(path: Path | None = None) -> DiscoveryConfig:
 
     threshold = int(d.get("threshold", DEFAULT_THRESHOLD))
     max_triggers = int(d.get("max_triggers_per_day", DEFAULT_MAX_TRIGGERS_PER_DAY))
+    re_triage_delta = float(d.get("re_triage_delta", DEFAULT_RE_TRIAGE_DELTA))
     if not 1 <= threshold <= 10:
         raise ValueError(f"discovery.threshold must be 1-10, got {threshold}")
     if max_triggers < 0:
         raise ValueError(
             f"discovery.max_triggers_per_day must be >= 0, got {max_triggers}"
+        )
+    if not 0 < re_triage_delta < 1:
+        raise ValueError(
+            "discovery.re_triage_delta must be a fraction in (0, 1), got"
+            f" {re_triage_delta}"
         )
 
     def _pos_int(section: str, key: str, default: int, what: str) -> int:
@@ -161,6 +169,7 @@ def load_config(path: Path | None = None) -> DiscoveryConfig:
         threshold=threshold,
         max_triggers_per_day=max_triggers,
         subject_template=str(d.get("subject_template", DEFAULT_SUBJECT_TEMPLATE)),
+        re_triage_delta=re_triage_delta,
         cooldown_seconds={str(k): int(v) for k, v in cooldown.items()},
         enabled_collectors=tuple(str(name) for name in collectors.get("enabled", [])),
         github=GithubSettings(
@@ -208,6 +217,7 @@ __all__ = [
     "CONFIG_FILE",
     "Ctx",
     "DEFAULT_COOLDOWN_SECONDS",
+    "DEFAULT_RE_TRIAGE_DELTA",
     "DiscoveryConfig",
     "GithubSettings",
     "HNSettings",

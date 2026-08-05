@@ -41,6 +41,15 @@ STAR_ACCEL_PER_WEEK = 200.0
 SPIKE_REPO_AGE_DAYS = 30
 SPIKE_CONTRIBUTORS = 15
 
+# Primary metric per source — the basis of the re-triage delta (design §4.7).
+# pricing is binary (content_hash change), handled separately.
+PRIMARY_METRIC: dict[str, str] = {
+    "github": "stars",
+    "hn": "points",
+    "reddit": "points",
+    "pypi": "downloads_last_week",
+}
+
 # Token substrings for repo noise (design §4.4: dotfiles, demo/tutorial).
 _NOISE_REPO_TOKENS = ("demo", "tutorial", "sample")
 
@@ -121,6 +130,35 @@ def pricing_changed(sig: Signal, prior: Optional[Signal]) -> bool:
     return bool(cur) and bool(prev) and cur != prev
 
 
+def fractional_growth(
+    sig: Signal, prior: Optional[Signal], key: str
+) -> Optional[float]:
+    """``(cur - prev) / prev`` for a numeric metric; None without a positive
+    baseline (a delta cannot be claimed without one — D6)."""
+    if prior is None:
+        return None
+    cur = sig.metrics.get(key)
+    prev = prior.metrics.get(key)
+    if not isinstance(cur, (int, float)) or not isinstance(prev, (int, float)):
+        return None
+    if prev <= 0:
+        return None
+    return (cur - prev) / prev
+
+
+def re_triage_needed(sig: Signal, prior: Optional[Signal], delta: float) -> bool:
+    """Design §4.7: fractional metric growth past ``delta`` re-opens a TRIAGED
+    item. Pricing re-opens on any content-hash change; numeric sources on
+    their primary metric; anything else stays closed (honest default, D6)."""
+    if sig.source == "pricing":
+        return pricing_changed(sig, prior)
+    key = PRIMARY_METRIC.get(sig.source)
+    if key is None:
+        return False
+    growth = fractional_growth(sig, prior, key)
+    return growth is not None and growth > delta
+
+
 def noise_filters(sig: Signal) -> bool:
     """True drops the candidate before storage (design §4.4): dotfiles,
     demo/tutorial repos, curated lists, and unengaged single-user posts."""
@@ -168,13 +206,16 @@ def pre_qualify(sig: Signal, prior: Optional[Signal], *, now: str) -> list[str]:
 
 __all__ = [
     "CHURN_PATTERNS",
+    "PRIMARY_METRIC",
     "STAR_ACCEL_PER_WEEK",
     "churn_phrases",
     "contributor_spike",
     "download_delta",
     "engagement_ratio",
+    "fractional_growth",
     "noise_filters",
     "pre_qualify",
     "pricing_changed",
+    "re_triage_needed",
     "star_acceleration",
 ]

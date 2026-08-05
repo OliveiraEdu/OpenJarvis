@@ -216,6 +216,17 @@ class SignalStore:
         self._conn.commit()
         return False, int(existing.id or 0)
 
+    def count_triggered_today(self, now_iso: str) -> int:
+        """Triggers recorded on the UTC day of ``now_iso`` — the daily-cap
+        input (design §4.7). ``triggered_at`` is written by the cycle as UTC
+        ISO, so the date prefix is a day boundary (a signal keeps its
+        ``triggered_at`` through DONE/FAILED)."""
+        (n,) = self._conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE triggered_at LIKE ?",
+            (now_iso[:10] + "%",),
+        ).fetchone()
+        return int(n)
+
     def set_status(
         self,
         signal_id: int,
