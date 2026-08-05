@@ -1,0 +1,14 @@
+{
+  "category": "",
+  "metrics": {
+    "bytes": 2207564,
+    "content_hash": "229a8319ae50bfd92bf862dc9abf15a50e955004bad7ee6701d4c4e3af5c5a9d",
+    "normalized_len": 37352
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "pricing",
+  "status": "NEW",
+  "title": "pricing: cloud.google.com",
+  "triage_reason": ""
+}

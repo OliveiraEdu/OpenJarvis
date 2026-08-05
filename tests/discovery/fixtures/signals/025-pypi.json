@@ -1,0 +1,16 @@
+{
+  "category": "",
+  "metrics": {
+    "latest_release": "2026-04-29T21:21:15",
+    "releases_count": 35,
+    "requires_python": ">=3.8",
+    "summary": "The official Python client for Ollama.",
+    "version": "0.6.2"
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "pypi",
+  "status": "NEW",
+  "title": "ollama",
+  "triage_reason": ""
+}

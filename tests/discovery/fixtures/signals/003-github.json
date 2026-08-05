@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 30,
+    "created_at": "2026-05-31T14:05:51Z",
+    "forks": 321,
+    "language": "Python",
+    "license": "AGPL-3.0",
+    "open_issues": 1030,
+    "owner_type": "Organization",
+    "pushed_at": "2026-08-04T10:17:45Z",
+    "stars": 84777
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "odysseus-dev/odysseus",
+  "triage_reason": ""
+}

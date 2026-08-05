@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 30,
+    "created_at": "2026-05-18T02:16:36Z",
+    "forks": 1290,
+    "language": "Go",
+    "license": "Apache-2.0",
+    "open_issues": 74,
+    "owner_type": "Organization",
+    "pushed_at": "2026-08-05T09:50:21Z",
+    "stars": 19003
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "alibaba/open-code-review",
+  "triage_reason": ""
+}

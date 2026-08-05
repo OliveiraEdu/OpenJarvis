@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 2,
+    "created_at": "2026-06-10T07:46:43Z",
+    "forks": 445,
+    "language": "JavaScript",
+    "license": "AGPL-3.0",
+    "open_issues": 7,
+    "owner_type": "User",
+    "pushed_at": "2026-07-30T14:02:33Z",
+    "stars": 4716
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "chuspeeism/dashi-ppt-skill",
+  "triage_reason": ""
+}

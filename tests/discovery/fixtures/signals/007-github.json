@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 15,
+    "created_at": "2026-06-10T11:52:41Z",
+    "forks": 1292,
+    "language": "TypeScript",
+    "license": "MIT",
+    "open_issues": 873,
+    "owner_type": "Organization",
+    "pushed_at": "2026-08-05T11:34:25Z",
+    "stars": 12647
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "XiaomiMiMo/MiMo-Code",
+  "triage_reason": ""
+}

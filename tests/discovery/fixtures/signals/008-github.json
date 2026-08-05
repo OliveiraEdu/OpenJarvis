@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 29,
+    "created_at": "2026-06-09T06:28:20Z",
+    "forks": 1337,
+    "language": "JavaScript",
+    "license": "MIT",
+    "open_issues": 15,
+    "owner_type": "User",
+    "pushed_at": "2026-08-05T08:52:29Z",
+    "stars": 9878
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "cobusgreyling/loop-engineering",
+  "triage_reason": ""
+}

@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 11,
+    "created_at": "2026-05-18T23:45:50Z",
+    "forks": 1146,
+    "language": "TypeScript",
+    "license": "AGPL-3.0",
+    "open_issues": 14,
+    "owner_type": "User",
+    "pushed_at": "2026-08-05T09:21:36Z",
+    "stars": 4519
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "basketikun/infinite-canvas",
+  "triage_reason": ""
+}

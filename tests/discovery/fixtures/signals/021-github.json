@@ -1,0 +1,19 @@
+{
+  "category": "",
+  "metrics": {
+    "created_at": "2026-07-07T05:05:58Z",
+    "forks": 310,
+    "language": "Python",
+    "license": "MIT",
+    "open_issues": 19,
+    "owner_type": "User",
+    "pushed_at": "2026-08-03T22:25:42Z",
+    "stars": 3993
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "petergyang/no-ai-slop",
+  "triage_reason": ""
+}

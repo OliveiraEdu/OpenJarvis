@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 1,
+    "created_at": "2026-07-17T15:57:54Z",
+    "forks": 260,
+    "language": "Swift",
+    "license": "Apache-2.0",
+    "open_issues": 41,
+    "owner_type": "User",
+    "pushed_at": "2026-08-05T08:23:58Z",
+    "stars": 5019
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "drumih/turbo-fieldfare",
+  "triage_reason": ""
+}

@@ -1,0 +1,16 @@
+{
+  "signal": {
+    "metrics": {
+      "bytes": 651598,
+      "content_hash": "9c9ad5871dfecd113c34629f798c7018308dd7d1b132fa334ff51bf9a2156dad",
+      "normalized_len": 33924
+    },
+    "source": "pricing",
+    "title": "pricing: azure.microsoft.com"
+  },
+  "triage": {
+    "category": "cloud",
+    "reason": "Azure pricing change with significant da",
+    "score": 8
+  }
+}

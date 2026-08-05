@@ -1,0 +1,16 @@
+{
+  "category": "",
+  "metrics": {
+    "latest_release": "2026-07-06T18:27:27",
+    "releases_count": 26,
+    "requires_python": ">=3.10",
+    "summary": "pgvector support for Python",
+    "version": "0.5.0"
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "pypi",
+  "status": "NEW",
+  "title": "pgvector",
+  "triage_reason": ""
+}

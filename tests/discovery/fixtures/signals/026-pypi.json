@@ -1,0 +1,17 @@
+{
+  "category": "",
+  "metrics": {
+    "downloads_last_week": 7023264,
+    "latest_release": "2026-07-14T01:27:50",
+    "releases_count": 238,
+    "requires_python": ">=3.10",
+    "summary": "Parallel PyData with Task Scheduling",
+    "version": "2026.7.1"
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "pypi",
+  "status": "NEW",
+  "title": "dask",
+  "triage_reason": ""
+}

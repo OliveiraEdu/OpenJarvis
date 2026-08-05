@@ -1,0 +1,20 @@
+{
+  "category": "",
+  "metrics": {
+    "contributors": 5,
+    "created_at": "2026-05-17T06:41:12Z",
+    "forks": 689,
+    "language": "HTML",
+    "license": "MIT",
+    "open_issues": 4,
+    "owner_type": "Organization",
+    "pushed_at": "2026-07-19T12:59:49Z",
+    "stars": 6328
+  },
+  "pre_qualify": "",
+  "score": null,
+  "source": "github",
+  "status": "NEW",
+  "title": "datawhalechina/Agent-Learning-Hub",
+  "triage_reason": ""
+}
