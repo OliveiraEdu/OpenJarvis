@@ -211,30 +211,61 @@ class FakeCollector:
         return list(self._signals)
 
 
-def _cycle(tmp_path, signals, *, offline: bool = False, ask: Callable | None = None):
+class FakeRunner:
+    """Minimal trigger seam for cycle tests (C5): records topics, returns a
+    canned slug so no research.sh is ever spawned."""
+
+    def __init__(self, slug: str = "fake-slug") -> None:
+        self.slug = slug
+        self.topics: list[str] = []
+
+    def __call__(self, ctx: Ctx, topic: str) -> str:
+        self.topics.append(topic)
+        return self.slug
+
+
+def _cycle(
+    tmp_path,
+    signals,
+    *,
+    offline: bool = False,
+    ask: Callable | None = None,
+    runner: Callable | None = None,
+):
     ctx = Ctx(
         state_dir=tmp_path,
         workspace=tmp_path / "ws",
         root=REPO_ROOT,
         offline=offline,
     )
-    rc = run_cycle(ctx, load_config(), {"hn": FakeCollector(signals)}, triage_ask=ask)
+    rc = run_cycle(
+        ctx,
+        load_config(),
+        {"hn": FakeCollector(signals)},
+        triage_ask=ask,
+        trigger_runner=runner or FakeRunner(),
+    )
     return ctx, rc
 
 
 def test_cycle_triages_pre_qualified_new_signal(tmp_path):
     ask = FakeAsk(GOOD_REPLY)
-    ctx, rc = _cycle(tmp_path, [_sig()], ask=ask)
+    runner = FakeRunner()
+    ctx, rc = _cycle(tmp_path, [_sig()], ask=ask, runner=runner)
     assert rc == 0
     with SignalStore(tmp_path / "signals.db") as st:
-        (row,) = st.list_by_status("TRIAGED")
+        # Score 9 >= threshold 7 -> the decide stage triggers the deep-dive;
+        # the fake runner records it and the row lands DONE.
+        (row,) = st.list_by_status("DONE")
         stats = st.stats()
     assert row.score == 9
     assert row.category == "db"
     assert row.triage_reason == "credible momentum"
     assert stats["NEW"] == 0
-    assert stats["TRIAGED"] == 1
+    assert stats["TRIAGED"] == 0
+    assert stats["DONE"] == 1
     assert len(ask.prompts) == 1
+    assert len(runner.topics) == 1
 
 
 def test_cycle_marks_parse_failed_verdict_honestly(tmp_path):

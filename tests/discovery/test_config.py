@@ -16,6 +16,7 @@ def test_default_config_has_committed_defaults():
     assert isinstance(cfg, DiscoveryConfig)
     assert cfg.threshold == 7
     assert cfg.max_triggers_per_day == 3
+    assert cfg.re_triage_delta == 0.3
     assert cfg.subject_template == "{title} | Scope: {category}"
     assert cfg.enabled_collectors == (
         "github",
@@ -67,6 +68,20 @@ def test_negative_trigger_cap_is_rejected(tmp_path):
     cfg_file.write_text("[discovery]\nmax_triggers_per_day = -1\n")
     with pytest.raises(ValueError, match="max_triggers_per_day"):
         load_config(cfg_file)
+
+
+@pytest.mark.parametrize("bad", [0, 1, -0.1, 1.5])
+def test_re_triage_delta_out_of_range_is_rejected(tmp_path, bad):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(f"[discovery]\nre_triage_delta = {bad}\n")
+    with pytest.raises(ValueError, match="re_triage_delta"):
+        load_config(cfg_file)
+
+
+def test_re_triage_delta_override_is_honored(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[discovery]\nre_triage_delta = 0.5\n")
+    assert load_config(cfg_file).re_triage_delta == 0.5
 
 
 def test_missing_config_file_raises(tmp_path):

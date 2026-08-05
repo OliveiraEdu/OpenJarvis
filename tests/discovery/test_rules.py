@@ -7,14 +7,17 @@ return None/False rather than raise when a delta cannot be computed (D6).
 
 from __future__ import annotations
 
+import pytest
 from rules import (
     churn_phrases,
     contributor_spike,
     download_delta,
     engagement_ratio,
+    fractional_growth,
     noise_filters,
     pre_qualify,
     pricing_changed,
+    re_triage_needed,
     star_acceleration,
 )
 from store import Signal
@@ -140,6 +143,43 @@ def test_pricing_changed():
     assert not pricing_changed(sig, _sig("pricing", "https://x", content_hash="B"))
     assert not pricing_changed(sig, None)
     assert not pricing_changed(_sig("hn", "x"), prior)  # wrong source
+
+
+# -- re-triage delta (design §4.7) -------------------------------------------
+
+
+def test_fractional_growth():
+    sig = _gh(120)
+    prior = _gh(100)
+    assert fractional_growth(sig, prior, "stars") == pytest.approx(0.2)
+    # No baseline / wrong key / non-numeric / non-positive prev -> None (D6).
+    assert fractional_growth(sig, None, "stars") is None
+    assert fractional_growth(sig, prior, "missing") is None
+    assert fractional_growth(_gh(120), _gh(0), "stars") is None
+    assert fractional_growth(sig, _sig("github", "x", stars="many"), "stars") is None
+
+
+def test_re_triage_needed_on_numeric_growth():
+    sig = _gh(150)
+    prior = _gh(100)
+    assert re_triage_needed(sig, prior, 0.3)  # +50% > delta
+    assert not re_triage_needed(_gh(110), prior, 0.3)  # +10% <= delta
+    assert not re_triage_needed(sig, None, 0.3)  # first sighting: no baseline
+
+
+def test_re_triage_needed_on_pricing_hash_change():
+    sig = _sig("pricing", "https://x", content_hash="B")
+    prior = _sig("pricing", "https://x", content_hash="A")
+    assert re_triage_needed(sig, prior, 0.3)
+    assert not re_triage_needed(
+        sig, _sig("pricing", "https://x", content_hash="B"), 0.3
+    )
+
+
+def test_re_triage_needed_honest_false_without_comparable_metric():
+    # Unlisted source or missing primary metric -> never re-opens (D6).
+    assert not re_triage_needed(_sig("sec_edgar", "x"), _sig("sec_edgar", "x"), 0.3)
+    assert not re_triage_needed(_sig("hn", "x"), _sig("hn", "x"), 0.3)
 
 
 # -- pre-qualify composition ------------------------------------------------
