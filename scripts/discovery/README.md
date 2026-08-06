@@ -99,3 +99,19 @@ Each column of `signals.db` has a concrete reader shipped with its writer:
 
 See design §7. M1–M7 are implemented; the cron (host `systemd` user timer,
 00/06/12/18) runs the live cycle.
+
+## Operations
+
+- `systemctl --user list-timers` → two user timers under
+  `opencode-job-openjarvis-4f1aad65c715-*`:
+  - `trend-seeker-discovery`: runs the live cycle at 00/06/12/18.
+  - `trend-seeker-outcome-check`: 20 min after the 12:00/18:00 cycles, snapshots
+    `signals.db` counts by status into its scheduler log (works even if the
+    engine is down, since it only reads the DB).
+- Run state lives in the scheduler job JSONs under
+  `~/.config/opencode/scheduler/scopes/openjarvis-4f1aad65c715/jobs/`
+  (`lastRunAt` / `lastRunStatus`), not in the systemd journal. Trust those files
+  for health checks.
+- Both timers were hand-fixed (2026-08-05/06): the scheduler plugin's
+  `OnCalendar=* *-*-* …` translation is rejected by systemd 255; keep the valid
+  single-line `OnCalendar=*-*-* HH,HH:MM:SS` form.
