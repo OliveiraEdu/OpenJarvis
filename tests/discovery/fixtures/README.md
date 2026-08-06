@@ -22,6 +22,11 @@ network (**C3**). The tests run the SAME pure modules (`rules.py`,
   only the checked `{score, category, reason}`; the raw engine text is
   intentionally not kept (parse-level reply regressions stay covered by
   the canned-reply tests in `test_triage.py`, D6).
+- **Raw payload fixtures** (top level) — collector `fetch()` inputs replayed
+  through the fake opener: `github_search.json`, `github_contributors.json`,
+  `hn_search.json`, `pypi.json`, `pypistats.json`, `pricing.html`,
+  `pricing_changed.html`, `reddit_rss.xml`, and `hf_models.json` (added
+  2026-08-06, mirrors the Hub `sort=trendingScore` response shape).
 
 ## Sanitization (C7)
 

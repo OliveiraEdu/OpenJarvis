@@ -105,10 +105,12 @@ Each column of `signals.db` has a concrete reader shipped with its writer:
 3. `research_slug` → links each trigger to its deep-dive workspace and
    `traces.db` run.
 4. `triage_reason` / `category` / sanitized metrics → the fixture exporter.
+5. Every `signals` row → `discovery.sh hf` and `discovery.sh signals
+   --source X` (metrics decoded, sorted by the source's primary metric).
 
 ## Milestones
 
-See design §7. M1–M7 are implemented; the cron (host `systemd` user timer,
+See design §7. M1–M8 are implemented; the cron (host `systemd` user timer,
 00/06/12/18) runs the live cycle.
 
 ## Operations

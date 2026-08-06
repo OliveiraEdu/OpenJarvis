@@ -1,6 +1,8 @@
 # Trend Seeker — Market-Signal Discovery Engine (design)
 
-**Status:** proposed · **Date:** 2026-08-04 · **Author:** OpenJarvis pipeline session
+**Status:** implemented (M1–M7 done; cron resumed 2026-08-05; HF collector, read
+subcommands, and outcome-check timer landed 2026-08-06) · **Date:** 2026-08-04 ·
+**Author:** OpenJarvis pipeline session
 
 Builds on: the on-demand IT-market research pipeline (`scripts/research.sh` +
 `scripts/research_phases.py` + `scripts/research_lib.sh` + `scripts/prompts/`,
@@ -431,9 +433,10 @@ hub"`) must stay green; `bash -n` on the new shell scripts.
 | M2 | Collectors v1 | GitHub, HN, Reddit RSS, PyPI, pricing-diff collectors + fixtures + fake-network tests; placeholder stubs registered |
 | M3 | Rules + decide | `rules.py`, `decide.py`, table-driven tests |
 | M4 | Triage | `triage_prompt.txt` (newline-free) + D4 contract test, `triage.py` + seam, parse tests, live-marked smoke |
-| M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9, later resolved), Phase C (data loop): per-repo GitHub contributor capture landed so `contributor_spike` can fire (`fdab65d0`), fixture exporter + hygiene tests + first real exported payloads (`d75e9bcb`). Remaining: unpause + resume cron |
+| M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9, later resolved), Phase C (data loop): per-repo GitHub contributor capture landed so `contributor_spike` can fire (`fdab65d0`), fixture exporter + hygiene tests + first real exported payloads (`d75e9bcb`). Remaining item — unpause + resume cron — **resolved (2026-08-05); see M8** |
 | M6 | Layer 2 | **Done (2026-08-05):** `state.json` (schema 1) written by `research_phases.py` after every phase — create + merge, replace-in-place per phase (run order preserved); statuses OK/RETRIED/GATE_FAIL (DEGRADED reserved for launcher-side degrade marking); `PhaseSpec.state_tools` narrows recorded tools (default: all distinct tools in the asklog, counted through `count_tool_calls`); feedback is computed ONCE in `run_phase` and shared by the trace write and state.json (single source of truth). Fixture: `tests/pipeline/fixtures/state/storagesys.json` reconstructed by `export_trace_fixtures.py` from the artifacts/asklogs/traces fixtures (deterministic, zero diff on re-run); `tests/pipeline/test_state_json.py` (schema + bytes/tool_counts/feedback cross-consistency) + run_phase state tests in `test_orchestration.py` |
 | M7 | Docs + calibration | **Done (2026-08-06):** `scripts/discovery/README.md` (operator guide: architecture, quick start, config, offline harness, D7 consumers), engineering-standards "related docs" pointer, roadmap note, and the `--calibrate` consumer wired (D7): pure `decide.calibrate()` + `store.decision_rows()` + `discovery.sh calibrate` CLI — per-category precision (`score ≥ threshold` → DONE rate over launched DONE+FAILED runs; pending deferred/interrupted rows reported separately; precision `None` = no evidence yet, never a bogus 0). 10 new tests (7 calibrate, 1 store, 2 bash-seam CLI) |
+| M8 | HF collector + readers + ops | **Done (2026-08-06):** `HuggingFaceCollector` landed — Hub `sort=trendingScore` API, one no-auth request per cycle, dedupe on model id, `min_trending_score` floor; metrics downloads/likes/trending_score/pipeline_tag/library_name/last_modified (author dropped at export, §10.6); wired into config (`HFSettings`), the registry, and the fixture exporter, with `hf_models.json` fixture + fake-opener tests (§4.3). Rules leg closed (D7 gap): hf signals now pre-qualify via download-delta `ADOPTION_SPIKE` (`PRIMARY_METRIC["hf"]="downloads"`, §4.4). Cron **resumed and running** — `trend-seeker-discovery` fires 00/06/12/18; first live HF collection at the 12:00 cycle on 2026-08-06 (20 models, all NEW first-sighting). Companion `trend-seeker-outcome-check` timer (12:20/18:20) snapshots `signals.db` stats after each cycle (stats-only: works with the engine down). Read subcommands (D7 readers): `hf` (tailored view) and generic `signals --source X` (any source, metrics decoded, sorted by `PRIMARY_METRIC` with an honest id-order fallback). Discovery suite: 162 passed |
 
 Every milestone ships with the PR checklist from `engineering-standards.md`:
 `tests/pipeline/` + full offline suite green
@@ -458,7 +461,7 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 | Question | Decision |
 |---|---|
 | Build order | Layer 1 (discovery) then Layer 2 (state handoff) |
-| Collector breadth | v1: GitHub, HN, Reddit RSS, PyPI, static pricing-diff; placeholders for SEC EDGAR, Reddit OAuth, job boards, cloud marketplaces |
+| Collector breadth | v1: GitHub, HN, Reddit RSS, PyPI, static pricing-diff; **+ HuggingFace Hub (M8, 2026-08-06)**; placeholders for SEC EDGAR, Reddit OAuth, job boards, cloud marketplaces |
 | Trigger mode | Auto — threshold → `scripts/research.sh` headless |
 | Cadence | **Resolved (M5, 2026-08-05):** host-side scheduler-plugin cron (`schedule_job`) calling `discovery.sh run --cycle` directly — the container cannot see `scripts/discovery/` (repo not mounted), so the jarvis-native path is deferred; `deploy/templates/trend_discovery.toml` is registered-ready for when the mount is fixed |
 | Deliverables | Markdown reports (existing pipeline output) |
@@ -472,10 +475,13 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
    image rebuild) exists; the host-side plugin cron is the adopted fallback.
 2. GitHub token availability (rate-limit upgrade only).
 3. Reddit RSS vs OAuth JSON (v1 uses RSS; OAuth is the placeholder).
-4. Exact cron cadence — **decided (M5):** 6-hourly (`0 */6 * * *`), registered
-   as the `trend-seeker-discovery` host job (currently **paused**; resume with
-   `systemctl --user start opencode-job-openjarvis-4f1aad65c715-trend-seeker-discovery.timer`).
-   Pricing/pypi stay longer-cooldown by rule, so a 6 h poll is safe.
+4. Exact cron cadence — **decided (M5), resumed (2026-08-05):** 6-hourly
+   (`0 */6 * * *`), registered as the `trend-seeker-discovery` host job and
+   running (fires 00/06/12/18; the 12:00 cycle on 2026-08-06 collected the
+   first 20 HF models). A companion `trend-seeker-outcome-check` timer
+   (12:20/18:20) snapshots `signals.db` counts by status after those cycles —
+   stats-only, so it works even with the engine down. Pricing/pypi stay
+   longer-cooldown by rule, so a 6 h poll is safe.
 5. `state.json` retention vs. cleanup (default: keep as run record).
 6. Discovery fixture exporter sanitization rules — **decided (M5):** the
    exporter (`scripts/export_discovery_fixtures.py`) drops identity fields
@@ -489,9 +495,12 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 7. **Scheduler-plugin unit bug (opencode-scheduler@1.3.0):** its cron→systemd
    translation emits `OnCalendar=* *-*-* HH:00:00`, which systemd 255 rejects
    ("bad unit file setting"), so `schedule_job` registration fails at
-   `systemctl --user start`. Workaround adopted: hand-written valid timer
+   `systemctl --user start`.    Workaround adopted: hand-written valid timer
    (`OnCalendar=*-*-* 00,06,12,18:00:00`) + supervisor-compatible job JSON.
-   A plugin update must regenerate both.
+   A plugin update must regenerate both. The `trend-seeker-outcome-check`
+   timer (added 2026-08-06) hit the same bug and got the same hand-fix
+   (`OnCalendar=*-*-* 12:20:00` / `18:20:00` + hand-written job JSON running
+   `discovery.py stats`).
 8. `engine_busy` in the decide stage is always `False`: `scripts/research.sh`
    has no lock file, so the §5.7 run-lock cannot be detected from the host.
 9. ~~Sandbox has no outbound DNS~~ — **resolved (2026-08-05):** the network
@@ -514,7 +523,7 @@ a constraint adopted because a production failure proved it necessary):
 | **D4** — one dialect per tool; contracts machine-checked | Triage JSON contract is machine-checked by a test that extracts the skeleton from `triage_prompt.txt` and validates it (§4.6, §6) — same pattern as `test_prompt_calculator_contract.py` |
 | **D5** — structure from code, content from model | Categories, thresholds, cooldowns, and the signal schema are code/committed config; the model fills score/category/reason only; `category` is coerced to a known enum |
 | **D6** — honest degrade by default | Parse failure, collection failure, and trigger failure are recorded explicitly (score 0, `FAILED` status, reason) — never silently skipped |
-| **D7** — every recorded signal has a consumer | Each column has a concrete reader shipped in the same change: `--calibrate` precision query, cycle summary line, `research_slug` linkage, exporter input (§4.7) |
+| **D7** — every recorded signal has a consumer | Each column has a concrete reader shipped in the same change: `--calibrate` precision query, cycle summary line, `research_slug` linkage, exporter input (§4.7), and the read subcommands `hf` / `signals --source X` (§4.3) |
 | **C1** — no positional-argument plumbing | `config.toml` parsed into typed frozen dataclasses mirroring `PhaseSpec`/`Ctx.from_env`; `Collector` is a typed contract; `discovery.sh` is a thin launcher (§4.1, §6) |
 | **C2** — prompts are code | `prompts/triage_prompt.txt` is a versioned template rendered via `string.Template` and stripped newline-free; the launcher carries no prompt text (§4.6) |
 | **C3** — every production failure becomes a regression test at the failing layer | `export_discovery_fixtures.py` mirrors `export_trace_fixtures.py`; live failures (collector parse, rule edge, triage drift, trigger mis-fire) are frozen at the failing layer as they occur (§6) |
