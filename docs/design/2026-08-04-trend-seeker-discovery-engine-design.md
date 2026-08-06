@@ -123,7 +123,7 @@ scripts/discovery/
                       run-lock, delegates to discovery.py (mirrors research.sh)
   discovery.py        stdlib orchestrator: collect → filter → store → triage →
                       decide → trigger; CLI:  run --cycle / run --once [--source X]
-                      / stats / calibrate / hf
+                      / stats / calibrate / hf / signals
   config.toml         committed defaults: thresholds, enable flags, cadence,
                       subject template, caps (no secrets)
   config.py           typed frozen dataclasses parsing config.toml (C1); Ctx.from_env

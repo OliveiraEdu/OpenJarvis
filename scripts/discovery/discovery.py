@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import collectors
 import config
@@ -306,6 +306,77 @@ def cmd_hf(ctx: config.Ctx, top: int, show_all: bool) -> int:
     return 0
 
 
+def _fmt_metric(v: object, maxlen: int = 48) -> str:
+    """One metrics key=value term; long values (summaries, content hashes)
+    are truncated so lines stay readable."""
+    s = _num(v)
+    return s if len(s) <= maxlen else s[: maxlen - 1] + "\u2026"
+
+
+def cmd_signals(
+    ctx: config.Ctx,
+    registry: dict[str, Any],
+    source: Optional[str],
+    top: int,
+    show_all: bool,
+) -> int:
+    """Generic D7 reader: list any collector's signals with metrics decoded,
+    sorted by the source's primary metric (rules.PRIMARY_METRIC, §4.4) or id
+    order for metric-less sources (pricing's binary content_hash is not a
+    sortable delta). ``--source`` narrows to one source; without it, every
+    source present in the DB gets a block."""
+    if source is not None and source not in registry:
+        print(f"[signals] collector '{source}' is not registered")
+        return 2
+    with store_mod.SignalStore(ctx.signals_db) as st:
+        all_sigs = st.list_all()
+    if source is not None:
+        groups: list[tuple[str, list[store_mod.Signal]]] = [
+            (source, [s for s in all_sigs if s.source == source])
+        ]
+    else:
+        by_source: dict[str, list[store_mod.Signal]] = {}
+        for s in all_sigs:
+            by_source.setdefault(s.source, []).append(s)
+        groups = sorted(by_source.items())
+    if not groups or all(not sigs for _, sigs in groups):
+        if source is not None:
+            print(f"[signals] no {source} signals yet")
+        else:
+            print("[signals] no signals yet")
+        return 0
+    for src, sigs in groups:
+        if not sigs:
+            continue
+        order = "id order"
+        primary = rules.PRIMARY_METRIC.get(src) or ""
+        if primary and any(isinstance(s.metrics.get(primary), int) for s in sigs):
+            metric_key = primary  # plain str: lambdas don't see narrowing
+            sigs = sorted(
+                sigs,
+                key=lambda s: s.metrics.get(metric_key, 0) or 0,
+                reverse=True,
+            )
+            order = f"sorted by {primary} desc"
+        limit = len(sigs) if show_all else max(1, min(top, len(sigs)))
+        print(f"[signals] source={src} total={len(sigs)} shown={limit} ({order})")
+        for s in sigs[:limit]:
+            m = s.metrics
+            extra = ""
+            if s.pre_qualify:
+                extra += f" pq={s.pre_qualify}"
+            if s.category:
+                extra += f" cat={s.category}"
+            if s.score is not None:
+                extra += f" score={s.score}"
+            metrics = " ".join(f"{k}={_fmt_metric(v)}" for k, v in m.items())
+            row = f"[signals] {s.id:>4} {s.title} status={s.status}"
+            if metrics:
+                row += f" {metrics}"
+            print(f"{row}{extra}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="discovery",
@@ -332,6 +403,19 @@ def main(argv: list[str] | None = None) -> int:
         "--all", action="store_true", help="show every hf signal, not just --top"
     )
 
+    sig = sub.add_parser(
+        "signals", help="list signals from any source, metrics decoded (§4.3)"
+    )
+    sig.add_argument(
+        "--source", default=None, help="source name (default: all sources)"
+    )
+    sig.add_argument(
+        "--top", type=int, default=10, help="max rows per source (default 10)"
+    )
+    sig.add_argument(
+        "--all", action="store_true", help="show every row, not just --top"
+    )
+
     args = ap.parse_args(argv)
     cfg = config.load_config()
     ctx = config.Ctx.from_env()
@@ -345,6 +429,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_calibrate(ctx, cfg)
     if args.cmd == "hf":
         return cmd_hf(ctx, top=args.top, show_all=args.all)
+    if args.cmd == "signals":
+        return cmd_signals(
+            ctx,
+            registry,
+            source=args.source,
+            top=args.top,
+            show_all=args.all,
+        )
     return 2
 
 

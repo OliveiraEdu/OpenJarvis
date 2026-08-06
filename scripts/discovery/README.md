@@ -21,7 +21,7 @@ triage.py       LLM score (1-10) + category + one-line reason, strict
 decide.py       TRIGGER / DEFER / SKIP table + the --calibrate precision
                 query (D7 consumer)                    §4.7
 trigger.py      decide -> research.sh seam; slugify mirrors research.sh  §4.7
-discovery.py    CLI orchestrator: run --cycle, stats, calibrate, hf   §4.2
+discovery.py    CLI orchestrator: run --cycle, stats, calibrate, hf, signals §4.2
 discovery.sh    launcher: env injection + run-lock (one cycle at a time)
 config.toml     committed defaults, no secrets (C7)     §4.1
 ```
@@ -55,6 +55,12 @@ OJ_OFFLINE=1 ./scripts/discovery/discovery.sh run --cycle
 # downloads desc. --all shows every row; --top N caps it (default 10).
 ./scripts/discovery/discovery.sh hf --top 10
 ./scripts/discovery/discovery.sh hf --all
+
+# Generic reader: any source, metrics decoded, sorted by that source's
+# primary metric (github->stars, hn->points, pypi->downloads_last_week,
+# hf->downloads; pricing keeps id order). No --source = one block per source.
+./scripts/discovery/discovery.sh signals --source github --top 20
+./scripts/discovery/discovery.sh signals --all
 ```
 
 ## Configuration

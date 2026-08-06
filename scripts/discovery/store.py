@@ -156,6 +156,12 @@ class SignalStore:
         ).fetchall()
         return [Signal.from_row(r) for r in rows]
 
+    def list_all(self) -> list[Signal]:
+        """Every signal, oldest first (the engine DB is small; the generic
+        signals reader groups per source in Python)."""
+        rows = self._conn.execute("SELECT * FROM signals ORDER BY id").fetchall()
+        return [Signal.from_row(r) for r in rows]
+
     def count_by_status(self, status: str) -> int:
         self._check_status(status)
         (n,) = self._conn.execute(

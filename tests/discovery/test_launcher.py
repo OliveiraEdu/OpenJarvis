@@ -139,6 +139,118 @@ def test_hf_subcommand_top_limits_rows(tmp_path):
     assert "acme/a" not in proc.stdout  # smallest downloads stays hidden
 
 
+def _seed_signals(tmp_path, rows):
+    """Seed signals as (source, source_key, title, metrics) rows."""
+    from store import Signal, SignalStore
+
+    with SignalStore(tmp_path / "signals.db") as st:
+        for source, key, title, metrics in rows:
+            st.upsert(
+                Signal(source=source, source_key=key, title=title, metrics=metrics)
+            )
+
+
+def test_signals_subcommand_reports_none_yet(tmp_path):
+    """Empty db -> honest 'no signals yet' / 'no <source> signals yet' (D6),
+    exit 0 — both with and without --source."""
+    proc = run_launcher("signals", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "no signals yet" in proc.stdout
+    proc = run_launcher("signals", "--source", "github", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "no github signals yet" in proc.stdout
+
+
+def test_signals_subcommand_lists_github_sorted_by_stars(tmp_path):
+    """Generic reader: github rows decoded, sorted by the primary metric
+    (stars, §4.4), status + full metrics on the line."""
+    _seed_signals(
+        tmp_path,
+        [
+            ("github", "a", "acme/a", {"stars": 100, "forks": 1, "language": "Rust"}),
+            (
+                "github",
+                "b",
+                "acme/b",
+                {"stars": 300, "forks": 10, "language": "Python"},
+            ),
+            ("github", "c", "acme/c", {"stars": 200, "forks": 5, "language": "Go"}),
+        ],
+    )
+    proc = run_launcher("signals", "--source", "github", "--all", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("[signals]")]
+    assert "source=github total=3 shown=3" in lines[0]
+    assert "sorted by stars desc" in lines[0]
+    assert (
+        "acme/b" in lines[1]
+        and "stars=300" in lines[1]
+        and "language=Python" in lines[1]
+    )
+    assert "acme/c" in lines[2] and "stars=200" in lines[2]
+    assert "acme/a" in lines[3] and "stars=100" in lines[3]
+
+
+def test_signals_subcommand_top_limits_rows(tmp_path):
+    """--top N caps the listing per source without hiding the true total."""
+    _seed_signals(
+        tmp_path,
+        [
+            ("github", "a", "acme/a", {"stars": 100}),
+            ("github", "b", "acme/b", {"stars": 300}),
+            ("github", "c", "acme/c", {"stars": 200}),
+        ],
+    )
+    proc = run_launcher(
+        "signals", "--source", "github", "--top", "2", state_dir=tmp_path
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("[signals]")]
+    assert "total=3 shown=2" in lines[0]
+    assert len(lines) == 3  # header + the two biggest
+    assert "acme/a" not in proc.stdout  # smallest stays hidden
+
+
+def test_signals_subcommand_without_source_lists_all_sources(tmp_path):
+    """No --source -> one block per source present, alphabetical."""
+    _seed_signals(
+        tmp_path,
+        [
+            ("github", "a", "acme/a", {"stars": 100}),
+            ("hn", "h1", "hn story", {"points": 42}),
+        ],
+    )
+    proc = run_launcher("signals", "--all", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "source=github total=1 shown=1" in proc.stdout
+    assert "source=hn total=1 shown=1" in proc.stdout
+    assert proc.stdout.index("source=github") < proc.stdout.index("source=hn")
+
+
+def test_signals_subcommand_metricless_source_keeps_id_order(tmp_path):
+    """Sources without a numeric primary (pricing's binary content_hash) keep
+    insertion order and say so — no misleading sort claim."""
+    _seed_signals(
+        tmp_path,
+        [
+            ("pricing", "b", "p2", {"content_hash": "x"}),
+            ("pricing", "a", "p1", {"content_hash": "y"}),
+        ],
+    )
+    proc = run_launcher("signals", "--source", "pricing", "--all", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("[signals]")]
+    assert "id order" in lines[0]
+    assert "p2" in lines[1] and "p1" in lines[2]
+
+
+def test_signals_subcommand_unknown_source_is_a_usage_error(tmp_path):
+    """Unknown --source is a usage error, never a silent empty listing."""
+    proc = run_launcher("signals", "--source", "nope", state_dir=tmp_path)
+    assert proc.returncode == 2
+    assert "not registered" in proc.stdout
+
+
 def test_unknown_source_is_a_usage_error(tmp_path):
     proc = run_launcher("run", "--source", "nope", state_dir=tmp_path)
     assert proc.returncode == 2
