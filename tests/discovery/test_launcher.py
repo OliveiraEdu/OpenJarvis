@@ -41,6 +41,41 @@ def test_stats_subcommand_reports_zero_counts(tmp_path):
     assert "total=0" in proc.stdout
 
 
+def test_calibrate_subcommand_reports_no_evidence_yet(tmp_path):
+    """Empty signals.db -> the honest 'no evidence' line (D6), exit 0."""
+    proc = run_launcher("calibrate", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "no signals with score >= threshold yet" in proc.stdout
+
+
+def test_calibrate_subcommand_reports_per_category_precision(tmp_path):
+    """Seeded db -> per-category precision through the full bash seam (D7:
+    the (score, outcome) pairs get a reader, thresholds tunable from data)."""
+    from store import Signal, SignalStore
+
+    with SignalStore(tmp_path / "signals.db") as st:
+        for i, (score, category, status) in enumerate(
+            [
+                (9, "cloud", "DONE"),
+                (8, "cloud", "FAILED"),
+                (7, "cloud", "TRIAGED"),  # deferred: pending, not evidence
+                (7, "storage", "DONE"),
+            ]
+        ):
+            _inserted, sid = st.upsert(
+                Signal(source="pricing", source_key=f"cal{i}", title=f"t{i}")
+            )
+            st.set_status(sid, status, score=score, category=category)
+
+    proc = run_launcher("calibrate", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    cloud_line = next(line for line in proc.stdout.splitlines() if "cloud" in line)
+    assert "eligible=  3 launched=  2 done=  1 failed=  1 pending=  1" in cloud_line
+    assert "precision=50%" in cloud_line
+    storage_line = next(line for line in proc.stdout.splitlines() if "storage" in line)
+    assert "precision=100%" in storage_line
+
+
 def test_unknown_source_is_a_usage_error(tmp_path):
     proc = run_launcher("run", "--source", "nope", state_dir=tmp_path)
     assert proc.returncode == 2

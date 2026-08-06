@@ -17,7 +17,9 @@ unit-testable (C5/D3). Consumers (D7): the trigger wiring in M4 and the
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Any, Iterable, Optional
 
 from store import Signal
 
@@ -72,10 +74,61 @@ def decision(
     return TRIGGER
 
 
+def calibrate(
+    rows: Iterable[tuple[Optional[int], str, str]],
+    threshold: int,
+) -> list[dict[str, Any]]:
+    """Per-category decision precision — the D7 consumer (design §4.7).
+
+    ``rows`` are ``(score, category, status)`` triples read from signals.db
+    (``store.SignalStore.decision_rows``). Only signals with
+    ``score >= threshold`` were ever trigger-eligible; among them precision is
+    the DONE rate over *launched* runs (DONE + FAILED) — the pure measure of
+    triage quality, independent of cooldown/cap timing. Still-open rows
+    (TRIAGED after a DEFER, or TRIGGERED from an interrupted run) are reported
+    as ``pending`` so the funnel's coverage is visible; a category with no
+    launched run reports precision ``None`` (no evidence yet) instead of a
+    bogus 0. Rows sort by category; a blank category counts as
+    ``uncategorized``. Pure and unit-testable (C5/D3) — the CLI prints the
+    result.
+    """
+    per: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"done": 0, "failed": 0, "pending": 0}
+    )
+    for score, category, status in rows:
+        if score is None or score < threshold:
+            continue
+        bucket = per[category or "uncategorized"]
+        if status == "DONE":
+            bucket["done"] += 1
+        elif status == "FAILED":
+            bucket["failed"] += 1
+        else:  # TRIAGED (deferred) or TRIGGERED (interrupted run)
+            bucket["pending"] += 1
+
+    summary: list[dict[str, Any]] = []
+    for category in sorted(per):
+        bucket = per[category]
+        launched = bucket["done"] + bucket["failed"]
+        summary.append(
+            {
+                "category": category,
+                "eligible": launched + bucket["pending"],
+                "launched": launched,
+                "done": bucket["done"],
+                "failed": bucket["failed"],
+                "pending": bucket["pending"],
+                "precision": (bucket["done"] / launched) if launched else None,
+            }
+        )
+    return summary
+
+
 __all__ = [
     "DEFER",
     "SKIP",
     "TRIGGER",
+    "calibrate",
     "daily_cap_reached",
     "decision",
     "source_in_cooldown",

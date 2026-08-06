@@ -165,6 +165,17 @@ class SignalStore:
         counts["total"] = sum(counts[s] for s in VALID_STATUSES)
         return counts
 
+    def decision_rows(self) -> list[tuple[Optional[int], str, str]]:
+        """``(score, category, status)`` triples for the calibrate consumer
+        (D7, design §4.7). ``score`` may be None (never triaged) — the
+        consumer filters on it; ``category`` may be blank."""
+        return [
+            (row[0], row[1] or "", row[2])
+            for row in self._conn.execute(
+                "SELECT score, category, status FROM signals ORDER BY id"
+            )
+        ]
+
     # -- writes -------------------------------------------------------------
 
     def upsert(self, signal: Signal) -> tuple[bool, int]:

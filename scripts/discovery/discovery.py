@@ -242,6 +242,30 @@ def cmd_stats(ctx: config.Ctx) -> int:
     return 0
 
 
+def cmd_calibrate(ctx: config.Ctx, cfg: config.DiscoveryConfig) -> int:
+    """Per-category decision precision — the D7 calibration consumer
+    (design §4.7): ``score >= threshold`` -> DONE rate, so thresholds are
+    tuned from data, not anecdote (C6). Precision is DONE over launched
+    (DONE + FAILED) — pure triage quality, independent of cooldown/cap."""
+    with store_mod.SignalStore(ctx.signals_db) as st:
+        rows = st.decision_rows()
+    summary = decide.calibrate(rows, cfg.threshold)
+    if not summary:
+        print("[calibrate] no signals with score >= threshold yet")
+        return 0
+    for row in summary:
+        precision = (
+            f"{row['precision']:.0%}" if row["precision"] is not None else "no evidence"
+        )
+        print(
+            f"[calibrate] {row['category']:<14} eligible={row['eligible']:>3}"
+            f" launched={row['launched']:>3} done={row['done']:>3}"
+            f" failed={row['failed']:>3} pending={row['pending']:>3}"
+            f" precision={precision}"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="discovery",
@@ -258,6 +282,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("stats", help="print signals.db counts by status")
 
+    sub.add_parser(
+        "calibrate", help="per-category decision precision (D7 consumer, §4.7)"
+    )
+
     args = ap.parse_args(argv)
     cfg = config.load_config()
     ctx = config.Ctx.from_env()
@@ -267,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_cycle(ctx, cfg, registry, once=args.once, source=args.source)
     if args.cmd == "stats":
         return cmd_stats(ctx)
+    if args.cmd == "calibrate":
+        return cmd_calibrate(ctx, cfg)
     return 2
 
 

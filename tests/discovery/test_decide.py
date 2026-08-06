@@ -1,4 +1,8 @@
-"""M3: trigger decision — the design §4.7 table, pure and table-driven."""
+"""M3: trigger decision — the design §4.7 table, pure and table-driven.
+
+M7 adds the ``calibrate`` precision query — the D7 consumer for the
+(score, outcome) pairs the decide stage records.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ from decide import (
     DEFER,
     SKIP,
     TRIGGER,
+    calibrate,
     daily_cap_reached,
     decision,
     source_in_cooldown,
@@ -128,3 +133,91 @@ def test_daily_cap_reached():
     assert daily_cap_reached(3, 3)
     assert daily_cap_reached(4, 3)
     assert not daily_cap_reached(2, 3)
+
+
+# -- calibration (M7, D7 consumer) ------------------------------------------
+
+
+def test_calibrate_reports_per_category_precision():
+    """score >= threshold -> DONE rate over launched (DONE+FAILED) runs."""
+    rows = [
+        (9, "cloud", "DONE"),
+        (8, "cloud", "FAILED"),
+        (7, "cloud", "TRIAGED"),  # deferred, still open
+        (8, "storage", "DONE"),
+    ]
+    summary = calibrate(rows, threshold=7)
+    assert [(r["category"], r["precision"]) for r in summary] == [
+        ("cloud", 0.5),
+        ("storage", 1.0),
+    ]
+    cloud, storage = summary
+    assert cloud["eligible"] == 3
+    assert cloud["launched"] == 2
+    assert cloud["done"] == 1
+    assert cloud["failed"] == 1
+    assert cloud["pending"] == 1
+    assert storage["eligible"] == 1
+    assert storage["launched"] == 1
+    assert storage["pending"] == 0
+
+
+def test_calibrate_filters_below_threshold_and_missing_scores():
+    """Below-threshold and never-triaged (None) rows are ineligible."""
+    rows = [
+        (9, "cloud", "DONE"),
+        (6, "cloud", "DONE"),  # below threshold
+        (None, "cloud", "NEW"),  # never triaged
+        (7, "storage", "FAILED"),
+    ]
+    summary = calibrate(rows, threshold=7)
+    assert [(r["category"], r["precision"]) for r in summary] == [
+        ("cloud", 1.0),
+        ("storage", 0.0),
+    ]
+    assert summary[0]["eligible"] == 1
+    assert summary[1]["eligible"] == 1
+
+
+def test_calibrate_precision_is_none_without_evidence():
+    """Eligible but nothing launched yet -> None, not a bogus 0 (D6)."""
+    summary = calibrate([(9, "cloud", "TRIAGED")], threshold=7)
+    assert summary == [
+        {
+            "category": "cloud",
+            "eligible": 1,
+            "launched": 0,
+            "done": 0,
+            "failed": 0,
+            "pending": 1,
+            "precision": None,
+        }
+    ]
+
+
+def test_calibrate_counts_interrupted_triggered_as_pending():
+    """A lingering TRIGGERED row (interrupted run) is pending, not launched —
+    its outcome is unknown."""
+    rows = [(9, "cloud", "TRIGGERED"), (9, "cloud", "DONE")]
+    (cloud,) = calibrate(rows, threshold=7)
+    assert cloud["launched"] == 1
+    assert cloud["done"] == 1
+    assert cloud["pending"] == 1
+    assert cloud["precision"] == 1.0
+
+
+def test_calibrate_blank_category_is_uncategorized():
+    summary = calibrate([(9, "", "DONE")], threshold=7)
+    assert summary[0]["category"] == "uncategorized"
+
+
+def test_calibrate_empty_rows_return_empty_list():
+    assert calibrate([], threshold=7) == []
+
+
+def test_calibrate_sorts_by_category():
+    summary = calibrate(
+        [(9, "zebra", "DONE"), (9, "alpha", "DONE"), (9, "mike", "DONE")],
+        threshold=7,
+    )
+    assert [r["category"] for r in summary] == ["alpha", "mike", "zebra"]

@@ -123,5 +123,20 @@ def test_metrics_roundtrip_nested(store):
     assert got.metrics == metrics
 
 
+def test_decision_rows_feeds_calibrate_consumer(store):
+    """D7 consumer input: (score, category, status) triples, blank category
+    normalized to '' (never triaged rows carry None score)."""
+    assert store.decision_rows() == []
+    store.upsert(make_signal())
+    store.set_status(
+        store.get("github", "owner/repo").id,
+        "DONE",
+        score=9,
+        category="db",
+    )
+    store.upsert(make_signal(source_key="other/repo"))  # never triaged
+    assert store.decision_rows() == [(9, "db", "DONE"), (None, "", "NEW")]
+
+
 def test_valid_statuses_exhaustive():
     assert VALID_STATUSES == {"NEW", "TRIAGED", "TRIGGERED", "DONE", "FAILED"}
