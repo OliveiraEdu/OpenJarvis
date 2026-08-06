@@ -45,6 +45,17 @@
 set -euo pipefail
 
 TOPIC="${1:?Usage: $0 \"<subject + scope + constraints>\"}"
+# Reject flag-shaped arguments: a bare "--help" (or any "-…") would otherwise
+# be treated as a topic and spawn a bogus workspace (observed with
+# `--help` -> `help/`). Topics are subjects/scopes — never dash-prefixed.
+case "$TOPIC" in
+  -*)
+    echo "error: '$TOPIC' looks like a flag, not a research topic — pass a" >&2
+    echo "       quoted \"subject + scope + constraints\" string, e.g." >&2
+    echo "       ./scripts/research.sh \"Subject: RISC-V CPUs | Scope: Europe, 2024-2028\"" >&2
+    exit 2
+    ;;
+esac
 AGENT_NAME="${OJ_AGENT_NAME:-it-market-analyst}"
 TEMPLATE_ID="it_market_analyst"
 TEMPLATE_FILE="deploy/templates/${TEMPLATE_ID}.toml"
