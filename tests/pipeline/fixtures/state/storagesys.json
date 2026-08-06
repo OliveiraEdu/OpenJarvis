@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "run_id": "subject-storage-systems-for-ai-training-",
+  "topic": "Subject: Storage systems for AI training pipelines | Scope: global, 2026-2030",
+  "phases": [
+    {
+      "phase": "gather",
+      "attempts": 1,
+      "status": "OK",
+      "artifact": "findings.md",
+      "artifact_bytes": 1732,
+      "tool_counts": {
+        "web_search": 4,
+        "file_write": 2
+      },
+      "feedback": 0.9,
+      "gate": "pass"
+    },
+    {
+      "phase": "verify",
+      "attempts": 1,
+      "status": "OK",
+      "artifact": "numbers.md",
+      "artifact_bytes": 2051,
+      "tool_counts": {
+        "file_read": 1,
+        "calculator": 2,
+        "file_write": 1
+      },
+      "feedback": 0.9,
+      "gate": "pass"
+    },
+    {
+      "phase": "part1",
+      "attempts": 1,
+      "status": "OK",
+      "artifact": "report.md",
+      "artifact_bytes": 6192,
+      "tool_counts": {
+        "file_read": 2,
+        "file_write": 3
+      },
+      "feedback": 0.9,
+      "gate": "pass"
+    },
+    {
+      "phase": "part2",
+      "attempts": 1,
+      "status": "OK",
+      "artifact": "report.md",
+      "artifact_bytes": 6192,
+      "tool_counts": {
+        "file_read": 1,
+        "file_write": 3
+      },
+      "feedback": 1.0,
+      "gate": "pass"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ passing phase here means the identical bytes production would validate.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import string
@@ -33,7 +34,9 @@ from research_phases import (
     reset_summary_memory,
     resolve_agent_uuid,
     run_phase,
+    state_path,
     write_feedback,
+    write_state,
 )
 from tests.pipeline.helpers import ARM, FIXTURES, HPC
 
@@ -383,6 +386,87 @@ def test_run_phase_restores_snapshot_before_each_attempt(tmp_path, capsys):
     assert len(ask.calls) == 2
     out = capsys.readouterr().out
     assert out.count("restored artifact from snapshot") == 2  # before every attempt
+
+
+# ── Layer 2: state.json (design §5.1/§5.2) ───────────────────────────────────
+
+
+def state_json(ctx: Ctx) -> dict:
+    return json.loads(state_path(ctx).read_text(encoding="utf-8"))
+
+
+def test_run_phase_writes_state_json_on_success(tmp_path):
+    ctx = make_ctx(tmp_path)
+    spec = PHASES["gather"]
+    ask = FakeAsk(ctx, spec, [("facts" * 200, ASKLOG_GATHER)])
+    assert run_phase(spec, ctx, ask=ask) is True
+    data = state_json(ctx)
+    assert data["schema"] == 1
+    assert data["run_id"] == ctx.slug == "s"
+    assert data["topic"] == "Test topic"
+    (entry,) = data["phases"]
+    assert entry == {
+        "phase": "gather",
+        "attempts": 1,
+        "status": "OK",
+        "artifact": "findings.md",
+        "artifact_bytes": len(("facts" * 200).encode()),
+        "tool_counts": {"web_search": 2},
+        # 1 attempt, 1000-byte artifact -> 0.6 + 0.2, no size bonus
+        "feedback": pytest.approx(0.8),
+        "gate": "pass",
+    }
+
+
+def test_run_phase_state_json_records_retried_then_success(tmp_path):
+    ctx = make_ctx(tmp_path)
+    spec = PHASES["verify"]
+    ask = FakeAsk(
+        ctx,
+        spec,
+        [(DEGRADED_NUMBERS, ASKLOG_VERIFY), (VALID_NUMBERS, ASKLOG_VERIFY)],
+    )
+    assert run_phase(spec, ctx, ask=ask) is True
+    (entry,) = state_json(ctx)["phases"]
+    assert entry["status"] == "RETRIED"
+    assert entry["attempts"] == 2
+    assert entry["gate"] == "pass"
+    assert entry["tool_counts"] == {"calculator": 1}
+
+
+def test_run_phase_state_json_records_gate_fail(tmp_path, capsys):
+    ctx = make_ctx(tmp_path)
+    spec = PHASES["verify"]
+    ask = FakeAsk(ctx, spec, [(DEGRADED_NUMBERS, ASKLOG_VERIFY)])
+    assert run_phase(spec, ctx, ask=ask) is False
+    (entry,) = state_json(ctx)["phases"]
+    assert entry["status"] == "GATE_FAIL"
+    assert entry["attempts"] == MAX_ATTEMPTS
+    assert entry["gate"] == "fail"
+    # 184-byte degraded artifact, failed -> min(0.3, 0.2) = 0.2
+    assert entry["feedback"] == pytest.approx(0.2)
+
+
+def test_write_state_merges_phases_in_run_order(tmp_path):
+    ctx = make_ctx(tmp_path)
+    write_state(ctx, "gather", {"phase": "gather", "attempts": 1})
+    write_state(ctx, "verify", {"phase": "verify", "attempts": 2})
+    write_state(ctx, "gather", {"phase": "gather", "attempts": 3})  # replace in place
+    data = state_json(ctx)
+    assert data["schema"] == 1
+    assert data["run_id"] == "s"
+    assert data["topic"] == "Test topic"
+    assert [p["phase"] for p in data["phases"]] == ["gather", "verify"]
+    assert data["phases"][0]["attempts"] == 3
+
+
+def test_write_state_best_effort_never_aborts(tmp_path):
+    # the state dir is a file path that cannot be created -> write must not raise
+    ctx = make_ctx(tmp_path)
+    blocked = Path(ctx.workspace_host) / ctx.slug
+    blocked.rmdir()
+    (Path(ctx.workspace_host) / ctx.slug).write_text("not a dir", encoding="utf-8")
+    write_state(ctx, "gather", {"phase": "gather", "attempts": 1})  # no exception
 
 
 # ── feedback persistence: best-effort, never aborts the pipeline ─────────────

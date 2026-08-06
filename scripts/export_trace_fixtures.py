@@ -21,6 +21,10 @@ WHAT IT EXPORTS (fixtures tree under tests/pipeline/fixtures/):
   traces/<trace_id>.json      per-trace metadata (outcome, feedback, token
                               counts, tool-call histogram) — the ground-truth
                               record the artifact/asklog fixtures derive from.
+  state/storagesys.json       the Layer 2 state.json (§5) machine summary of
+                              the clean storagesys run, RECONSTRUCTED from the
+                              artifacts/asklogs/traces fixtures above (schema
+                              shape + cross-consistency pinned by tests).
   README.md                   origin + refresh instructions (auto-written).
 
 USAGE (from repo root):
@@ -37,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sqlite3
 import sys
@@ -232,6 +237,85 @@ def export_trace_metadata(con: sqlite3.Connection) -> list[str]:
     return exported
 
 
+# Layer 2 state.json (design §5.1/§5.3): phase -> (asklog fixture, trace id,
+# artifact fixture). The storagesys run is the reference — the first fully
+# clean end-to-end run (all four phases first-try, feedback 0.9/0.9/0.9/1.0).
+STATE_RUN = "storagesys"
+STATE_PHASES = {
+    "gather": ("storagesys-gather", "08a649271cb142de", "findings.md"),
+    "verify": ("storagesys-verify", "6ca6bd98241a404d", "numbers.md"),
+    "part1": ("storagesys-part1", "5c3a606a5bb041e3", "report.md"),
+    "part2": ("storagesys-part2", "370cd3c65c74462a", "report.md"),
+}
+
+
+def export_state_json(con: sqlite3.Connection) -> list[str]:
+    """Reconstruct tests/pipeline/fixtures/state/storagesys.json (§5.3).
+
+    The storagesys run predates state.json, so the fixture is RECONSTRUCTED
+    from the same ground-truth sources production uses: artifact bytes from
+    the committed artifacts/, tool_counts counted over the committed asklogs
+    through count_tool_calls (collect_tool_counts in research_phases.py), and
+    the feedback the run actually recorded on its traces (traces.db — for
+    part1 the final report.md was merged by part2, so its phase-time bytes,
+    and thus feedback_score, are not derivable from the fixtures). The topic
+    is parsed from the gather trace query ("Topic: <topic>."). Deterministic:
+    re-running the exporter produces zero diff.
+    """
+    from research_phases import STATE_SCHEMA, collect_tool_counts
+
+    state_dir = FIXTURES / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = FIXTURES / "artifacts" / STATE_RUN
+
+    phases: list[dict] = []
+    for name, (asklog_name, trace_id, artifact_name) in STATE_PHASES.items():
+        artifact = run_dir / artifact_name
+        asklog = FIXTURES / "asklogs" / f"{asklog_name}.txt"
+        if not artifact.is_file():
+            raise SystemExit(f"[export] state artifact missing: {artifact}")
+        if not asklog.is_file():
+            raise SystemExit(f"[export] state asklog missing: {asklog}")
+        row = con.execute(
+            "SELECT feedback FROM traces WHERE trace_id=?", (trace_id,)
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise SystemExit(f"[export] state trace {trace_id} missing feedback")
+        phases.append(
+            {
+                "phase": name,
+                "attempts": 1,
+                "status": "OK",
+                "artifact": artifact_name,
+                "artifact_bytes": artifact.stat().st_size,
+                "tool_counts": collect_tool_counts(str(asklog)),
+                "feedback": float(row[0]),
+                "gate": "pass",
+            }
+        )
+
+    topic_row = con.execute(
+        "SELECT query FROM traces WHERE trace_id=?",
+        (STATE_PHASES["gather"][1],),
+    ).fetchone()
+    topic = ""
+    if topic_row and topic_row[0]:
+        m = re.search(r"Topic: (.+?)\. Work this way", topic_row[0])
+        topic = m.group(1) if m else topic_row[0][:120]
+
+    data = {
+        "schema": STATE_SCHEMA,
+        "run_id": ARTIFACT_RUNS[STATE_RUN],
+        "topic": topic,
+        "phases": phases,
+    }
+    path = state_dir / f"{STATE_RUN}.json"
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    exported = [str(path.relative_to(REPO_ROOT))]
+    print(f"[export] state.json ({STATE_RUN} run) -> {exported[0]}")
+    return exported
+
+
 def write_readme(exported: list[str]) -> None:
     readme = FIXTURES / "README.md"
     readme.write_text(
@@ -277,6 +361,15 @@ def write_readme(exported: list[str]) -> None:
         "- **traces/** — per-trace metadata (outcome, feedback, tokens, tool-call\n"
         "  histogram) for every phase trace of the hpc, edgeai, and storagesys\n"
         "  runs; the ground truth the asklogs and artifact fixtures derive from.\n"
+        "- **state/** — the Layer 2 `state.json` (design §5) machine summary of\n"
+        "  the clean storagesys run, reconstructed by this exporter from the\n"
+        "  same ground-truth sources production uses: artifact bytes, tool\n"
+        "  counts over the asklogs (`count_tool_calls`), and the feedback the\n"
+        "  run actually recorded on its traces. Note: part1's `report.md` was\n"
+        "  later merged by part2, so its phase-time bytes (and thus\n"
+        "  `feedback_score`) are not derivable from the fixtures — the recorded\n"
+        "  trace feedback is the ground truth there. Re-running the exporter\n"
+        "  produces zero diff.\n"
         "\n"
         "## Refresh\n"
         "\n"
@@ -306,6 +399,7 @@ def main() -> int:
         exported += export_artifacts(args.workspace)
         exported += export_asklogs(con)
         exported += export_trace_metadata(con)
+        exported += export_state_json(con)
         write_readme(exported)
     finally:
         con.close()

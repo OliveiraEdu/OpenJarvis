@@ -24,7 +24,9 @@ Usage (from the launcher):
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import sqlite3
 import string
@@ -51,6 +53,10 @@ class PhaseSpec:
     an artifact filename within the workspace slug dir, restored before every
     attempt (used by append-phases so a failed attempt's appends cannot
     pollute the next attempt).
+
+    ``state_tools`` optionally narrows which tools state.json records for this
+    phase (design §5.1); empty — the default — records every distinct tool the
+    asklog shows, counted through the SAME bash counter the tool gate uses.
     """
 
     label: str
@@ -61,6 +67,7 @@ class PhaseSpec:
     snapshot: str | None
     fb_keyword: str | None
     normalize: str | None
+    state_tools: tuple[str, ...] = ()
 
 
 PHASES: dict[str, PhaseSpec] = {
@@ -204,6 +211,34 @@ def bash_feedback_score(attempts: int, size: int, passed: str) -> float:
     return float(proc.stdout.strip())
 
 
+_ASKSLOG_TOOL_RE = re.compile(r"^\s*\u21b3\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def collect_tool_counts(asklog: str, tools: tuple[str, ...] = ()) -> dict[str, int]:
+    """Tool-call histogram for state.json (design §5.1), counted through the
+    SAME bash counter the tool gate uses (``count_tool_calls`` in
+    research_lib.sh) — one source of truth, so the committed state.json
+    fixture and a live run agree.
+
+    ``tools`` optionally narrows the recorded set (PhaseSpec.state_tools);
+    empty records every distinct tool the asklog shows. A missing/unreadable
+    asklog yields an empty histogram (never raises — the pipeline must not
+    abort on state bookkeeping).
+    """
+    if not tools:
+        seen: list[str] = []
+        try:
+            with open(asklog, encoding="utf-8") as fh:
+                for line in fh:
+                    m = _ASKSLOG_TOOL_RE.match(line)
+                    if m and m.group(1) not in seen:
+                        seen.append(m.group(1))
+        except OSError:
+            return {}
+        tools = tuple(seen)
+    return {tool: bash_tool_count(asklog, tool) for tool in tools}
+
+
 # ── feedback persistence (Phase B of the TDL loop) ───────────────────────────
 
 
@@ -268,23 +303,104 @@ def write_feedback(
 def record_feedback(
     label: str,
     keyword: str,
-    attempts: int,
-    artifact: str,
-    passed: str,
+    score: float,
     state_dir: str,
     agent_name: str,
 ) -> None:
-    size = 0
-    try:
-        size = os.path.getsize(artifact)
-    except OSError:
-        size = 0
-    score = bash_feedback_score(attempts, size, passed)
+    """Write the score onto the trace that produced the artifact (located by
+    the feedback keyword the phase prompt carried). Best-effort: a missing
+    agent uuid, or a locked/missing traces.db, must never abort the pipeline.
+
+    The score itself is computed by the caller (``run_phase``) because
+    state.json records the SAME value (design §5.1) — one computation, two
+    consumers.
+    """
     agent_uuid = resolve_agent_uuid(state_dir, agent_name)
     if not agent_uuid:
         print(f"[research] {label}: agent uuid not found, feedback skipped")
         return
     write_feedback(label, keyword, score, agent_uuid, state_dir)
+
+
+# ── Layer 2: structured state handoff (design §5.1/§5.2) ─────────────────────
+
+STATE_SCHEMA = 1
+
+
+def state_path(ctx: Ctx) -> Path:
+    """Host path of the run's state.json (``$WORKSPACE_HOST/<slug>/state.json``)."""
+    return Path(ctx.workspace_host) / ctx.slug / "state.json"
+
+
+def _state_entry(
+    spec: PhaseSpec,
+    phase_name: str,
+    attempts: int,
+    size: int,
+    tool_counts: dict[str, int],
+    score: float,
+    ok: bool,
+) -> dict:
+    """One phase row for state.json (design §5.1 schema).
+
+    Status is per-phase and gate-derived: OK (first-try pass), RETRIED (pass
+    after a retry), GATE_FAIL (exhausted attempts). DEGRADED is reserved in
+    the schema for launcher-side degrade marking (research.sh VERIFY/3b
+    fallbacks); run_phase never sets it in v1.
+    """
+    status = "OK" if ok and attempts == 1 else ("RETRIED" if ok else "GATE_FAIL")
+    return {
+        "phase": phase_name,
+        "attempts": attempts,
+        "status": status,
+        "artifact": spec.artifact,
+        "artifact_bytes": size,
+        "tool_counts": tool_counts,
+        "feedback": score,
+        "gate": "pass" if ok else "fail",
+    }
+
+
+def write_state(ctx: Ctx, phase_name: str, entry: dict) -> None:
+    """Create + merge the run's state.json after every phase (§5.1/§5.2).
+
+    One entry per phase, keyed by phase name: re-running a phase replaces its
+    row in place, keeping run order. ``schema``/``run_id``/``topic`` are set
+    idempotently on every write. Best-effort: a read-only/locked workspace
+    must never abort the pipeline (same principle as write_feedback).
+    """
+    try:
+        path = state_path(ctx)
+        data: dict = {}
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+        data.update(schema=STATE_SCHEMA, run_id=ctx.slug, topic=ctx.topic)
+        phases = data.get("phases")
+        if not isinstance(phases, list):
+            phases = []
+        # replace an existing row IN PLACE (run order preserved); append new
+        for i, existing in enumerate(phases):
+            if existing.get("phase") == phase_name:
+                phases[i] = entry
+                break
+        else:
+            phases.append(entry)
+        data["phases"] = phases
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _phase_name_for(spec: PhaseSpec) -> str:
+    """PHASES name for a spec (fallback when run_phase is called without an
+    explicit name); ad-hoc specs fall back to their artifact filename."""
+    for name, candidate in PHASES.items():
+        if candidate is spec:
+            return name
+    return spec.artifact
 
 
 # ── the retry/gate/feedback loop ─────────────────────────────────────────────
@@ -311,10 +427,12 @@ def run_phase(
     ctx: Ctx,
     *,
     ask=ask_agent,
+    phase_name: str | None = None,
 ) -> bool:
     """Run one phase with up to MAX_ATTEMPTS tries. Returns True on success
-    (and records success feedback), False after exhausting retries (recording
-    a low score so the TDL loop sees the failure)."""
+    (recording success feedback + the state.json row), False after exhausting
+    retries (recording a low score so the TDL loop sees the failure)."""
+    phase_name = phase_name or _phase_name_for(spec)
     artifact = os.path.join(ctx.workspace_host, ctx.slug, spec.artifact)
     snapshot = (
         os.path.join(ctx.workspace_host, ctx.slug, spec.snapshot)
@@ -337,6 +455,7 @@ def run_phase(
         reset_summary_memory(ctx.state_dir, ctx.agent_name)
 
         asklog = tempfile.mktemp(prefix="oj-ask-")
+        tool_counts: dict[str, int] = {}
         try:
             ask(ctx.root, ctx.agent_name, prompt, asklog)
             if spec.normalize:
@@ -354,24 +473,35 @@ def run_phase(
                         f"[research] {spec.label}: tool-usage gate failed "
                         f"({n} {req_tool} call(s) < {req_min})"
                     )
+            tool_counts = collect_tool_counts(asklog, spec.state_tools)
         finally:
             try:
                 os.remove(asklog)
             except OSError:
                 pass
 
+        size = 0
+        try:
+            size = os.path.getsize(artifact)
+        except OSError:
+            pass
+
         if ok:
             print(f"[research] {spec.label} OK -> {artifact}")
+            score = bash_feedback_score(attempt, size, "yes")
             if spec.fb_keyword:
                 record_feedback(
                     spec.label,
                     spec.fb_keyword,
-                    attempt,
-                    artifact,
-                    "yes",
+                    score,
                     ctx.state_dir,
                     ctx.agent_name,
                 )
+            write_state(
+                ctx,
+                phase_name,
+                _state_entry(spec, phase_name, attempt, size, tool_counts, score, True),
+            )
             return True
 
         if attempt >= MAX_ATTEMPTS:
@@ -380,16 +510,22 @@ def run_phase(
                 f" after {attempt} attempts.",
                 file=sys.stderr,
             )
+            score = bash_feedback_score(attempt, size, "no")
             if spec.fb_keyword:
                 record_feedback(
                     spec.label,
                     spec.fb_keyword,
-                    attempt,
-                    artifact,
-                    "no",
+                    score,
                     ctx.state_dir,
                     ctx.agent_name,
                 )
+            write_state(
+                ctx,
+                phase_name,
+                _state_entry(
+                    spec, phase_name, attempt, size, tool_counts, score, False
+                ),
+            )
             return False
 
         print(
@@ -416,7 +552,7 @@ def main(argv: list[str]) -> int:
         except RuntimeError as exc:
             print(f"research_phases: {exc}", file=sys.stderr)
             return 2
-        return 0 if run_phase(PHASES[name], ctx) else 1
+        return 0 if run_phase(PHASES[name], ctx, phase_name=name) else 1
     print(
         "usage: research_phases.py run --phase <gather|verify|part1|part2>",
         file=sys.stderr,

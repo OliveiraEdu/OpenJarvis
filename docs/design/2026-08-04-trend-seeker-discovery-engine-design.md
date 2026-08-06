@@ -340,6 +340,11 @@ Values are deterministic and bash-verified (artifact bytes, gate counters,
 feedback score — all already computed by `research_lib.sh`; this is a
 serialization, not a new source of truth).
 
+v1 statuses written by `run_phase`: `OK` (first-try pass), `RETRIED` (pass
+after a retry), `GATE_FAIL` (exhausted attempts). `DEGRADED` is reserved in
+the schema for launcher-side degrade marking (research.sh VERIFY/3b
+fallbacks); `run_phase` never sets it in v1.
+
 ### 5.2 Changes to research_phases.py
 
 - `PhaseSpec` gains an optional `state_keys` mapping (which counters/bytes to
@@ -358,6 +363,15 @@ serialization, not a new source of truth).
 - Assertions: schema shape, per-phase bytes/tool_counts/feedback match the
   artifact + asklog fixtures (cross-fixture consistency, same pattern as
   `test_asklog_matches_trace_metadata_tool_counts`).
+
+The storagesys run predates state.json, so the committed fixture is
+**reconstructed** by `export_trace_fixtures.py` from the same ground-truth
+sources production uses: artifact bytes, `count_tool_calls` over the asklogs,
+and the feedback the run actually recorded on its traces (for part1 the final
+`report.md` was merged by part2, so its phase-time bytes — and thus
+`feedback_score` — are not derivable from the fixtures; the recorded trace
+feedback is the ground truth there). Re-running the exporter produces zero
+diff.
 
 ### 5.4 Future: orchestrator consumption
 
@@ -415,7 +429,7 @@ hub"`) must stay green; `bash -n` on the new shell scripts.
 | M3 | Rules + decide | `rules.py`, `decide.py`, table-driven tests |
 | M4 | Triage | `triage_prompt.txt` (newline-free) + D4 contract test, `triage.py` + seam, parse tests, live-marked smoke |
 | M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9, later resolved), Phase C (data loop): per-repo GitHub contributor capture landed so `contributor_spike` can fire (`fdab65d0`), fixture exporter + hygiene tests + first real exported payloads (`d75e9bcb`). Remaining: unpause + resume cron |
-| M6 | Layer 2 | `state.json` in `research_phases.py`, exported fixture, cross-consistency tests |
+| M6 | Layer 2 | **Done (2026-08-05):** `state.json` (schema 1) written by `research_phases.py` after every phase — create + merge, replace-in-place per phase (run order preserved); statuses OK/RETRIED/GATE_FAIL (DEGRADED reserved for launcher-side degrade marking); `PhaseSpec.state_tools` narrows recorded tools (default: all distinct tools in the asklog, counted through `count_tool_calls`); feedback is computed ONCE in `run_phase` and shared by the trace write and state.json (single source of truth). Fixture: `tests/pipeline/fixtures/state/storagesys.json` reconstructed by `export_trace_fixtures.py` from the artifacts/asklogs/traces fixtures (deterministic, zero diff on re-run); `tests/pipeline/test_state_json.py` (schema + bytes/tool_counts/feedback cross-consistency) + run_phase state tests in `test_orchestration.py` |
 | M7 | Docs + calibration | `scripts/discovery/README.md`, engineering-standards "related docs" pointer, roadmap note, `--calibrate` consumer wired (D7) |
 
 Every milestone ships with the PR checklist from `engineering-standards.md`:

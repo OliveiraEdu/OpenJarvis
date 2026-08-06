@@ -40,6 +40,15 @@ live pipeline uses.
 - **traces/** — per-trace metadata (outcome, feedback, tokens, tool-call
   histogram) for every phase trace of the hpc, edgeai, and storagesys
   runs; the ground truth the asklogs and artifact fixtures derive from.
+- **state/** — the Layer 2 `state.json` (design §5) machine summary of
+  the clean storagesys run, reconstructed by this exporter from the
+  same ground-truth sources production uses: artifact bytes, tool
+  counts over the asklogs (`count_tool_calls`), and the feedback the
+  run actually recorded on its traces. Note: part1's `report.md` was
+  later merged by part2, so its phase-time bytes (and thus
+  `feedback_score`) are not derivable from the fixtures — the recorded
+  trace feedback is the ground truth there. Re-running the exporter
+  produces zero diff.
 
 ## Refresh
 
