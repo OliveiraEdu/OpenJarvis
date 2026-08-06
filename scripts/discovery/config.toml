@@ -17,12 +17,13 @@ subject_template = "{title} | Scope: {category}"   # research.sh topic at trigge
 # Per-source seconds between triggers (design §4.7 defaults).
 github  = 86400            # 24 h
 hn      = 43200            # 12 h
+hf      = 43200            # 12 h
 reddit  = 86400            # 24 h
 pypi    = 604800           # 7 d
 pricing = 604800           # 7 d
 
 [collectors]
-enabled = ["github", "hn", "reddit", "pypi", "pricing"]
+enabled = ["github", "hn", "reddit", "pypi", "pricing", "hf"]
 
 [collectors.github]
 # Topic terms; the collector appends `created:>…` and `stars:>…` filters
@@ -35,6 +36,14 @@ max_repos = 20
 [collectors.hn]
 q = "postgres OR kubernetes OR llm"
 min_points = 50
+max_items = 20
+
+[collectors.hf]
+# Hub API model ranking, no auth — one request per cycle (design §4.3).
+# trendingScore is the Hub's attention proxy; min_trending_score floors the
+# candidates the triage stage sees.
+sort = "trendingScore"
+min_trending_score = 0.0
 max_items = 20
 
 [collectors.reddit]

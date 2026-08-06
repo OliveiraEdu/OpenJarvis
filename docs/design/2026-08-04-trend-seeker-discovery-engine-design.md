@@ -169,6 +169,7 @@ stdlib-only** (host `python3`), matching C1/C5. `collectors.py` uses
 | Collector | Source | Auth / rate limit | v1 | Notes |
 |---|---|---|---|---|
 | GitHub velocity | `api.github.com/search/repositories` (created:>…, stars:>…) | none (10 req/min unauthenticated; `GITHUB_TOKEN` env raises to 30) | **yes** | Star acceleration, contributor spikes, license/fork diversion |
+| Hugging Face Hub | `huggingface.co/api/models` (`sort=trendingScore`, no auth) | none | **yes** | trendingScore as an attention proxy for model/adoption velocity (closest parallel: GitHub stars); `min_trending_score` floor keeps marginal candidates from triage |
 | Hacker News | Firebase API (`hn.algolia.com`/firebase) + Algolia search | none | **yes** | Keyword velocity, engagement ratio (comments/upvotes) |
 | Reddit RSS | subreddit RSS feeds (`r/devops`, `r/sysadmin`, `r/dataengineering`, `r/LocalLLaMA`) | none (RSS) | **yes** | Churn-phrase regex on titles; **placeholder**: OAuth JSON API for full-text sentiment |
 | PyPI | `pypi.org/pypi/<pkg>/json` for a configured watch-list | none | **yes** | Download delta vs. prior cycle (ADOPTION_SPIKE). Note: `pypi.org` JSON carries release metadata but no download counts, so deltas come from best-effort `pypistats.org/api/packages/<pkg>/recent` (failure drops the metric, D6) |

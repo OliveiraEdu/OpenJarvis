@@ -24,15 +24,48 @@ def test_default_config_has_committed_defaults():
         "reddit",
         "pypi",
         "pricing",
+        "hf",
     )
     # Design §4.7 cooldown defaults.
     assert cfg.cooldown_for("github") == 86400
     assert cfg.cooldown_for("hn") == 43200
+    assert cfg.cooldown_for("hf") == 43200
     assert cfg.cooldown_for("reddit") == 86400
     assert cfg.cooldown_for("pypi") == 604800
     assert cfg.cooldown_for("pricing") == 604800
     # Unlisted sources fall back.
     assert cfg.cooldown_for("edgar") == DEFAULT_COOLDOWN_SECONDS
+
+
+def test_default_config_has_hf_collector_settings():
+    cfg = load_config()
+    assert cfg.hf.sort == "trendingScore"
+    assert cfg.hf.min_trending_score == 0.0
+    assert cfg.hf.max_items == 20
+
+
+def test_hf_override_file_is_honored(tmp_path):
+    overrides = tmp_path / "config.toml"
+    overrides.write_text(
+        "[discovery]\n"
+        "[collectors]\n"
+        'enabled = ["github", "hf"]\n'
+        "[collectors.hf]\n"
+        'sort = "trendingScore"\n'
+        "min_trending_score = 100.0\n"
+        "max_items = 5\n"
+    )
+    cfg = load_config(overrides)
+    assert cfg.enabled_collectors == ("github", "hf")
+    assert cfg.hf.min_trending_score == 100.0
+    assert cfg.hf.max_items == 5
+
+
+def test_negative_hf_floor_is_rejected(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[collectors.hf]\nmin_trending_score = -1.0\n")
+    with pytest.raises(ValueError, match="min_trending_score"):
+        load_config(cfg_file)
 
 
 def test_override_file_is_honored(tmp_path):

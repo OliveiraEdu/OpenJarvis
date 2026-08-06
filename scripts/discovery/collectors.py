@@ -2,10 +2,10 @@
 """Collectors — v1 market sources + placeholders (design §4.3).
 
 M2 wires the five low-hanging, no-auth collectors (github, hn, reddit, pypi,
-pricing) and registers the complex-source placeholders (SEC EDGAR, Reddit
-OAuth, job boards, cloud marketplaces) behind the same ``Collector``
-contract. Placeholders are disabled and raise ``NotImplementedError`` if
-fetched — no special-casing in the orchestrator.
+pricing); M2.1 adds the Hugging Face Hub ranking (hf) behind the same
+``Collector`` contract. The complex-source placeholders (SEC EDGAR, Reddit
+OAuth, job boards, cloud marketplaces) are registered but disabled and raise
+``NotImplementedError`` if fetched — no special-casing in the orchestrator.
 
 Contract for every collector:
 
@@ -34,6 +34,7 @@ from typing import Any, Optional, Protocol, runtime_checkable
 from config import (
     DiscoveryConfig,
     GithubSettings,
+    HFSettings,
     HNSettings,
     PricingSettings,
     PyPISettings,
@@ -45,6 +46,7 @@ DEFAULT_USER_AGENT = "openjarvis-trend-seeker/0.2 (+local market research)"
 GITHUB_API = "https://api.github.com"
 GITHUB_SEARCH = "https://api.github.com/search/repositories"
 HN_SEARCH = "https://hn.algolia.com/api/v1/search"
+HF_MODELS = "https://huggingface.co/api/models"
 PYPI_JSON = "https://pypi.org/pypi/{pkg}/json"
 PYPI_STATS = "https://pypistats.org/api/packages/{pkg}/recent"
 REDDIT_RSS = "https://www.reddit.com/r/{sub}/.rss"
@@ -228,6 +230,68 @@ class HNCollector(BaseCollector):
                         "num_comments": hit.get("num_comments"),
                         "created_at": hit.get("created_at"),
                         "author": hit.get("author"),
+                    },
+                )
+            )
+        return signals
+
+
+class HuggingFaceCollector(BaseCollector):
+    """Hugging Face Hub model ranking (trendingScore, no auth) — §4.3.
+
+    One request per cycle: the Hub's trending ranking is an attention proxy
+    for model/adoption velocity (closest parallel: GitHub stars). The
+    ``min_trending_score`` floor keeps marginal candidates away from triage;
+    a model without a trendingScore cannot clear the floor and is skipped.
+    A failed fetch raises like any other collector (the cycle degrades
+    honestly, D6).
+    """
+
+    name = "hf"
+
+    def __init__(
+        self,
+        settings: HFSettings,
+        *,
+        opener: Any | None = None,
+        timeout: float = 15.0,
+    ) -> None:
+        super().__init__(opener=opener, timeout=timeout)
+        self._settings = settings
+
+    def fetch(self, now: str) -> list[Signal]:
+        del now  # trending ranking is freshness-agnostic (C5: pure w.r.t. now)
+        params = urllib.parse.urlencode(
+            {
+                "sort": self._settings.sort,
+                "direction": "-1",
+                "limit": self._settings.max_items,
+            }
+        )
+        payload = json.loads(self._get(f"{HF_MODELS}?{params}").decode("utf-8"))
+
+        signals: list[Signal] = []
+        for item in payload if isinstance(payload, list) else []:
+            model_id = item.get("id")
+            if not model_id:
+                continue
+            trending = item.get("trendingScore")
+            if trending is None or trending < self._settings.min_trending_score:
+                continue
+            signals.append(
+                Signal(
+                    source=self.name,
+                    source_key=model_id,
+                    title=model_id,
+                    url=f"https://huggingface.co/{model_id}",
+                    metrics={
+                        "downloads": item.get("downloads"),
+                        "likes": item.get("likes"),
+                        "trending_score": trending,
+                        "pipeline_tag": item.get("pipeline_tag"),
+                        "library_name": item.get("library_name"),
+                        "author": item.get("author"),
+                        "last_modified": item.get("lastModified"),
                     },
                 )
             )
@@ -473,11 +537,12 @@ def placeholders() -> dict[str, _PlaceholderCollector]:
 
 
 def build_registry(cfg: DiscoveryConfig) -> dict[str, Collector]:
-    """Collector instances for a config — the five enabled v1 sources plus the
+    """Collector instances for a config — the six enabled v1 sources plus the
     disabled placeholders (design §4.3)."""
     registry: dict[str, Collector] = {
         "github": GithubCollector(cfg.github),
         "hn": HNCollector(cfg.hn),
+        "hf": HuggingFaceCollector(cfg.hf),
         "reddit": RedditRSSCollector(cfg.reddit),
         "pypi": PyPICollector(cfg.pypi),
         "pricing": PricingCollector(cfg.pricing),
@@ -491,7 +556,9 @@ __all__ = [
     "Collector",
     "FetchError",
     "GithubCollector",
+    "HF_MODELS",
     "HNCollector",
+    "HuggingFaceCollector",
     "PricingCollector",
     "PyPICollector",
     "RedditRSSCollector",

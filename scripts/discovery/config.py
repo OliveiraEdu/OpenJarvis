@@ -46,6 +46,19 @@ class HNSettings:
 
 
 @dataclass(frozen=True)
+class HFSettings:
+    """scripts/discovery config [collectors.hf] (design §4.3).
+
+    The Hub's trending ranking is an attention proxy for model/adoption
+    velocity; ``min_trending_score`` floors what the triage stage sees.
+    """
+
+    sort: str = "trendingScore"
+    min_trending_score: float = 0.0
+    max_items: int = 20
+
+
+@dataclass(frozen=True)
 class RedditSettings:
     subreddits: tuple[str, ...] = (
         "devops",
@@ -81,6 +94,7 @@ class DiscoveryConfig:
     enabled_collectors: tuple[str, ...] = ()
     github: GithubSettings = field(default_factory=GithubSettings)
     hn: HNSettings = field(default_factory=HNSettings)
+    hf: HFSettings = field(default_factory=HFSettings)
     reddit: RedditSettings = field(default_factory=RedditSettings)
     pypi: PyPISettings = field(default_factory=PyPISettings)
     pricing: PricingSettings = field(default_factory=PricingSettings)
@@ -165,6 +179,14 @@ def load_config(path: Path | None = None) -> DiscoveryConfig:
             return default
         return tuple(str(item) for item in raw)
 
+    def _min_trending_score(section: dict) -> float:
+        value = float(section.get("min_trending_score", 0.0))
+        if value < 0:
+            raise ValueError(
+                f"collectors.hf.min_trending_score must be >= 0, got {value}"
+            )
+        return value
+
     return DiscoveryConfig(
         threshold=threshold,
         max_triggers_per_day=max_triggers,
@@ -188,6 +210,11 @@ def load_config(path: Path | None = None) -> DiscoveryConfig:
             ),
             min_points=_pos_int("hn", "min_points", 50, "minimum points"),
             max_items=_pos_int("hn", "max_items", 20, "max items per cycle"),
+        ),
+        hf=HFSettings(
+            sort=str((collectors.get("hf", {}) or {}).get("sort", "trendingScore")),
+            min_trending_score=_min_trending_score(collectors.get("hf", {}) or {}),
+            max_items=_pos_int("hf", "max_items", 20, "max items per cycle"),
         ),
         reddit=RedditSettings(
             subreddits=_tuple(
@@ -220,6 +247,7 @@ __all__ = [
     "DEFAULT_RE_TRIAGE_DELTA",
     "DiscoveryConfig",
     "GithubSettings",
+    "HFSettings",
     "HNSettings",
     "PricingSettings",
     "PyPISettings",

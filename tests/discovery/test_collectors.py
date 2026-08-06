@@ -9,6 +9,7 @@ honest failure accounting (D6).
 from __future__ import annotations
 
 import io
+import json
 import urllib.request
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from collectors import (
     Collector,
     FetchError,
     GithubCollector,
+    HF_MODELS,
     HNCollector,
+    HuggingFaceCollector,
     PricingCollector,
     PyPICollector,
     RedditRSSCollector,
@@ -27,6 +30,7 @@ from collectors import (
 from config import (
     Ctx,
     GithubSettings,
+    HFSettings,
     HNSettings,
     PricingSettings,
     PyPISettings,
@@ -190,6 +194,81 @@ def test_hn_collector_parses_results_and_falls_back_to_item_url():
     assert "tags=story" in url
 
 
+# -- hugging face -----------------------------------------------------------
+
+
+def test_hf_collector_parses_trending_ranking():
+    opener = FakeOpener({"huggingface.co/api/models": _fx("hf_models.json")})
+    col = HuggingFaceCollector(HFSettings(), opener=opener)
+    signals = col.fetch(NOW)
+
+    assert [s.source_key for s in signals] == [
+        "nimbus/vectordb-lite",
+        "acme/storage-gemma-1b",
+        "jane/tiny-reranker",
+    ]
+    first = signals[0]
+    assert first.title == "nimbus/vectordb-lite"
+    assert first.url == "https://huggingface.co/nimbus/vectordb-lite"
+    assert first.metrics["downloads"] == 482100
+    assert first.metrics["likes"] == 312
+    assert first.metrics["trending_score"] == 876.5
+    assert first.metrics["pipeline_tag"] == "feature-extraction"
+    assert first.metrics["library_name"] == "sentence-transformers"
+    assert first.metrics["author"] == "nimbus"
+    assert first.metrics["last_modified"] == "2026-07-30T09:00:00.000Z"
+
+    url = opener.requests[0].full_url
+    assert url.startswith(HF_MODELS)
+    assert "sort=trendingScore" in url
+    assert "direction=-1" in url
+    assert "limit=20" in url
+
+
+def test_hf_collector_floor_filters_low_scores():
+    """min_trending_score floors what triage sees (design §4.3): a floor of
+    100 keeps the top two models, dropping the low-velocity one."""
+    opener = FakeOpener({"huggingface.co/api/models": _fx("hf_models.json")})
+    col = HuggingFaceCollector(HFSettings(min_trending_score=100.0), opener=opener)
+    signals = col.fetch(NOW)
+    assert [s.source_key for s in signals] == [
+        "nimbus/vectordb-lite",
+        "acme/storage-gemma-1b",
+    ]
+
+
+def test_hf_collector_skips_missing_id_or_score():
+    """An entry without an id can't be keyed (dedupe) and one without a
+    trendingScore can't clear the floor — both are skipped, not fatal."""
+    payload = json.dumps(
+        [
+            {"downloads": 1, "trendingScore": 999.0},  # no id
+            {"id": "acme/noscore", "downloads": 2},  # no trendingScore
+            {"id": "acme/ok", "trendingScore": 500.0},
+        ]
+    ).encode()
+    opener = FakeOpener({"huggingface.co/api/models": payload})
+    col = HuggingFaceCollector(HFSettings(), opener=opener)
+    signals = col.fetch(NOW)
+    assert [s.source_key for s in signals] == ["acme/ok"]
+
+
+def test_hf_collector_is_idempotent_given_same_now():
+    opener = FakeOpener({"huggingface.co/api/models": _fx("hf_models.json")})
+    col = HuggingFaceCollector(HFSettings(), opener=opener)
+    a = col.fetch(NOW)
+    b = col.fetch(NOW)
+    assert [s.source_key for s in a] == [s.source_key for s in b]
+
+
+def test_hf_collector_raises_on_non_list_payload():
+    """A rate-limit dict is not the models list — surface the fetch error
+    rather than silently collecting nothing (the cycle reports it, D6)."""
+    opener = FakeOpener({"huggingface.co/api/models": b'{"error": "rate limited"}'})
+    col = HuggingFaceCollector(HFSettings(), opener=opener)
+    assert col.fetch(NOW) == []
+
+
 # -- reddit rss ------------------------------------------------------------
 
 
@@ -304,6 +383,7 @@ def test_registry_lists_v1_sources_and_placeholders():
     assert set(registry) == {
         "github",
         "hn",
+        "hf",
         "reddit",
         "pypi",
         "pricing",
@@ -312,7 +392,7 @@ def test_registry_lists_v1_sources_and_placeholders():
         "job_boards",
         "cloud_marketplaces",
     }
-    for name in ("github", "hn", "reddit", "pypi", "pricing"):
+    for name in ("github", "hn", "hf", "reddit", "pypi", "pricing"):
         assert registry[name].enabled
     for name in ("sec_edgar", "reddit_oauth", "job_boards", "cloud_marketplaces"):
         assert not registry[name].enabled

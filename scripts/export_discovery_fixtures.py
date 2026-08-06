@@ -88,6 +88,16 @@ METRIC_WHITELIST: dict[str, frozenset[str]] = {
         }
     ),
     "hn": frozenset({"points", "num_comments", "created_at"}),
+    "hf": frozenset(
+        {
+            "downloads",
+            "likes",
+            "trending_score",
+            "pipeline_tag",
+            "library_name",
+            "last_modified",
+        }
+    ),
     "reddit": frozenset({"subreddit", "updated"}),
     "pypi": frozenset(
         {
