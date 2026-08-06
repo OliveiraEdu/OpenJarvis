@@ -133,6 +133,19 @@ def test_download_delta():
     assert download_delta(sig, _sig("pypi", "pgvector")) is None
 
 
+def test_download_delta_hf_uses_cumulative_downloads():
+    """HF mirrors pypi with its cumulative downloads (design §4.3/§4.4):
+    positive growth vs. the prior cycle is the adoption-velocity input."""
+    sig = _sig("hf", "nimbus/vectordb-lite", downloads=482100)
+    prior = _sig("hf", "nimbus/vectordb-lite", downloads=470000)
+    assert download_delta(sig, prior) == 12100
+    assert download_delta(sig, None) is None  # first sighting
+    # Hub API missing the count last cycle -> no baseline (D6).
+    assert download_delta(sig, _sig("hf", "nimbus/vectordb-lite")) is None
+    # Wrong source -> no delta.
+    assert download_delta(_sig("hn", "x"), prior) is None
+
+
 # -- pricing diff -----------------------------------------------------------
 
 
@@ -165,6 +178,15 @@ def test_re_triage_needed_on_numeric_growth():
     assert re_triage_needed(sig, prior, 0.3)  # +50% > delta
     assert not re_triage_needed(_gh(110), prior, 0.3)  # +10% <= delta
     assert not re_triage_needed(sig, None, 0.3)  # first sighting: no baseline
+
+
+def test_re_triage_needed_on_hf_download_growth():
+    """hf is listed in PRIMARY_METRIC, so fractional download growth re-opens
+    a TRIAGED model (design §4.7)."""
+    sig = _sig("hf", "nimbus/vectordb-lite", downloads=600000)
+    prior = _sig("hf", "nimbus/vectordb-lite", downloads=400000)
+    assert re_triage_needed(sig, prior, 0.3)  # +50% > delta
+    assert not re_triage_needed(sig, None, 0.3)
 
 
 def test_re_triage_needed_on_pricing_hash_change():
@@ -209,6 +231,20 @@ def test_pre_qualify_adoption_spike():
     # No growth -> no spike tag.
     same = _sig("pypi", "pgvector", downloads_last_week=7000)
     assert pre_qualify(same, prior, now=NOW) == []
+
+
+def test_pre_qualify_adoption_spike_for_hf():
+    """HF models with positive download growth pre-qualify for triage — the
+    trendingScore floor in the collector already filtered marginal candidates
+    (design §4.3), so the delta rule is the triage gate (D7: every recorded
+    hf signal has a consumer)."""
+    sig = _sig("hf", "nimbus/vectordb-lite", downloads=482100, trending_score=876.5)
+    prior = _sig("hf", "nimbus/vectordb-lite", downloads=470000)
+    assert pre_qualify(sig, prior, now=NOW) == ["ADOPTION_SPIKE"]
+    # First sighting (no baseline) or no growth -> no spike tag (D6).
+    assert pre_qualify(sig, None, now=NOW) == []
+    frozen = _sig("hf", "nimbus/vectordb-lite", downloads=470000)
+    assert pre_qualify(frozen, prior, now=NOW) == []
 
 
 def test_pre_qualify_empty_when_no_evidence():

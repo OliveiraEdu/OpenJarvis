@@ -42,12 +42,15 @@ SPIKE_REPO_AGE_DAYS = 30
 SPIKE_CONTRIBUTORS = 15
 
 # Primary metric per source — the basis of the re-triage delta (design §4.7).
-# pricing is binary (content_hash change), handled separately.
+# pricing is binary (content_hash change), handled separately. hf uses the
+# Hub's cumulative downloads — the closest parallel to PyPI's weekly count
+# (both are adoption-velocity inputs to ADOPTION_SPIKE).
 PRIMARY_METRIC: dict[str, str] = {
     "github": "stars",
     "hn": "points",
     "reddit": "points",
     "pypi": "downloads_last_week",
+    "hf": "downloads",
 }
 
 # Token substrings for repo noise (design §4.4: dotfiles, demo/tutorial).
@@ -110,12 +113,13 @@ def contributor_spike(sig: Signal, now: str) -> bool:
 
 
 def download_delta(sig: Signal, prior: Optional[Signal]) -> Optional[float]:
-    """PyPI weekly downloads vs. the prior cycle (design §4.4); None without
-    a baseline or when pypistats was unavailable (best-effort metric, D6)."""
-    if sig.source != "pypi" or prior is None:
+    """Downloads vs. the prior cycle for pypi (weekly count) and hf
+    (cumulative Hub count) — design §4.4; None without a baseline or when
+    the metric was unavailable (best-effort, D6)."""
+    if sig.source not in ("pypi", "hf") or prior is None:
         return None
-    cur = sig.metrics.get("downloads_last_week")
-    prev = prior.metrics.get("downloads_last_week")
+    cur = sig.metrics.get("downloads_last_week", sig.metrics.get("downloads"))
+    prev = prior.metrics.get("downloads_last_week", prior.metrics.get("downloads"))
     if not isinstance(cur, (int, float)) or not isinstance(prev, (int, float)):
         return None
     return float(cur - prev)
@@ -197,7 +201,7 @@ def pre_qualify(sig: Signal, prior: Optional[Signal], *, now: str) -> list[str]:
         tags.append("CHURN_SIGNAL")
     if pricing_changed(sig, prior):
         tags.append("PRICING_DIFF")
-    if sig.source == "pypi":
+    if sig.source in ("pypi", "hf"):
         delta = download_delta(sig, prior)
         if delta is not None and delta > 0:
             tags.append("ADOPTION_SPIKE")

@@ -194,7 +194,8 @@ clean TODO in the collector table — no special-casing in the orchestrator.
   from X", "too expensive", "deprecated", "alternatives to Y"); pre-qualify on
   ≥1 match in ≥1 thread (cross-thread threshold applied in decide).
 - `engagement_ratio(points, comments) -> float` — high comments:upvotes.
-- `download_delta(current, previous) -> float` — PyPI downloads vs. last cycle.
+- `download_delta(current, previous) -> float` — downloads vs. last cycle
+  (PyPI weekly count, or the Hub's cumulative count for HF models).
 - `noise_filters(sig) -> bool` — dotfiles, demo/tutorial repos, single-user
   rant posts without engagement.
 
