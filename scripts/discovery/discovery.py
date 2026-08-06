@@ -266,6 +266,46 @@ def cmd_calibrate(ctx: config.Ctx, cfg: config.DiscoveryConfig) -> int:
     return 0
 
 
+def _num(v: object) -> str:
+    """Metrics are JSON: format ints with thousands separators, show '-' for
+    absent values, and never crash on an unexpected type."""
+    if isinstance(v, int):
+        return f"{v:,}"
+    return "-" if v is None else str(v)
+
+
+def cmd_hf(ctx: config.Ctx, top: int, show_all: bool) -> int:
+    """List HuggingFace discovery signals — the D7 reader for the ``hf``
+    collector (design §4.3): metrics JSON decoded, sorted by downloads (the
+    primary metric, §4.4) so the biggest movers read first."""
+    with store_mod.SignalStore(ctx.signals_db) as st:
+        sigs = st.list_by_source("hf")
+    if not sigs:
+        print("[hf] no hf signals yet")
+        return 0
+    sigs.sort(key=lambda s: s.metrics.get("downloads", 0) or 0, reverse=True)
+    limit = len(sigs) if show_all else max(1, min(top, len(sigs)))
+    print(f"[hf] total={len(sigs)} shown={limit} (sorted by downloads desc)")
+    for s in sigs[:limit]:
+        m = s.metrics
+        extra = ""
+        if s.pre_qualify:
+            extra += f" pq={s.pre_qualify}"
+        if s.category:
+            extra += f" cat={s.category}"
+        if s.score is not None:
+            extra += f" score={s.score}"
+        print(
+            f"[hf] {s.id:>4} {s.title} status={s.status}"
+            f" dl={_num(m.get('downloads'))}"
+            f" likes={_num(m.get('likes'))}"
+            f" trend={_num(m.get('trending_score'))}"
+            f" pipeline={_num(m.get('pipeline_tag'))}"
+            f"{extra}"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="discovery",
@@ -286,6 +326,12 @@ def main(argv: list[str] | None = None) -> int:
         "calibrate", help="per-category decision precision (D7 consumer, §4.7)"
     )
 
+    hf = sub.add_parser("hf", help="list HuggingFace discovery signals (§4.3)")
+    hf.add_argument("--top", type=int, default=10, help="max rows to show (default 10)")
+    hf.add_argument(
+        "--all", action="store_true", help="show every hf signal, not just --top"
+    )
+
     args = ap.parse_args(argv)
     cfg = config.load_config()
     ctx = config.Ctx.from_env()
@@ -297,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_stats(ctx)
     if args.cmd == "calibrate":
         return cmd_calibrate(ctx, cfg)
+    if args.cmd == "hf":
+        return cmd_hf(ctx, top=args.top, show_all=args.all)
     return 2
 
 

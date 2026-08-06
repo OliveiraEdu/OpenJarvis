@@ -148,6 +148,14 @@ class SignalStore:
         ).fetchall()
         return [Signal.from_row(r) for r in rows]
 
+    def list_by_source(self, source: str) -> list[Signal]:
+        """All signals from one source, oldest first. Ordering by metric
+        values is the caller's job (metrics are JSON, not SQL-ordered)."""
+        rows = self._conn.execute(
+            "SELECT * FROM signals WHERE source=? ORDER BY id", (source,)
+        ).fetchall()
+        return [Signal.from_row(r) for r in rows]
+
     def count_by_status(self, status: str) -> int:
         self._check_status(status)
         (n,) = self._conn.execute(

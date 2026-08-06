@@ -11,6 +11,8 @@
 #   ./scripts/discovery/discovery.sh run --cycle
 #   ./scripts/discovery/discovery.sh run --once --source hn
 #   ./scripts/discovery/discovery.sh stats
+#   ./scripts/discovery/discovery.sh calibrate
+#   ./scripts/discovery/discovery.sh hf --top 10
 #
 # Env (same names as research.sh):
 #   OJ_STATE_DIR          signals.db + lock dir (default ~/.openjarvis)

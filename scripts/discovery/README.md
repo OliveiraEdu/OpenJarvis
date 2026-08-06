@@ -21,7 +21,7 @@ triage.py       LLM score (1-10) + category + one-line reason, strict
 decide.py       TRIGGER / DEFER / SKIP table + the --calibrate precision
                 query (D7 consumer)                    §4.7
 trigger.py      decide -> research.sh seam; slugify mirrors research.sh  §4.7
-discovery.py    CLI orchestrator: run --cycle, stats, calibrate   §4.2
+discovery.py    CLI orchestrator: run --cycle, stats, calibrate, hf   §4.2
 discovery.sh    launcher: env injection + run-lock (one cycle at a time)
 config.toml     committed defaults, no secrets (C7)     §4.1
 ```
@@ -50,6 +50,11 @@ OJ_OFFLINE=1 ./scripts/discovery/discovery.sh run --cycle
 # rate over launched runs) — the D7 consumer that turns (score, outcome)
 # pairs into a threshold-tuning signal.
 ./scripts/discovery/discovery.sh calibrate
+
+# Read the HuggingFace discovery results: metrics decoded, sorted by
+# downloads desc. --all shows every row; --top N caps it (default 10).
+./scripts/discovery/discovery.sh hf --top 10
+./scripts/discovery/discovery.sh hf --all
 ```
 
 ## Configuration

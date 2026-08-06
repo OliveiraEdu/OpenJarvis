@@ -76,6 +76,69 @@ def test_calibrate_subcommand_reports_per_category_precision(tmp_path):
     assert "precision=100%" in storage_line
 
 
+def _seed_hf(tmp_path, rows):
+    """Seed hf signals as (source_key, title, downloads, pre_qualify) rows."""
+    from store import Signal, SignalStore
+
+    with SignalStore(tmp_path / "signals.db") as st:
+        for key, title, downloads, pq in rows:
+            st.upsert(
+                Signal(
+                    source="hf",
+                    source_key=key,
+                    title=title,
+                    pre_qualify=pq,
+                    metrics={"downloads": downloads, "likes": 1, "trending_score": 1},
+                )
+            )
+
+
+def test_hf_subcommand_reports_none_yet(tmp_path):
+    """Empty signals.db -> the honest 'no hf signals yet' line (D6), exit 0."""
+    proc = run_launcher("hf", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "no hf signals yet" in proc.stdout
+
+
+def test_hf_subcommand_lists_signals_sorted_by_downloads(tmp_path):
+    """hf rows read back with metrics decoded, biggest downloads first, and
+    pre_qualify tags surfaced (the D7 reader for the hf collector)."""
+    _seed_hf(
+        tmp_path,
+        [
+            ("a", "acme/a", 100, ""),
+            ("b", "acme/b", 300, "ADOPTION_SPIKE"),
+            ("c", "acme/c", 200, ""),
+        ],
+    )
+    proc = run_launcher("hf", "--all", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("[hf]")]
+    assert "total=3 shown=3" in lines[0]
+    assert "acme/b" in lines[1] and "dl=300" in lines[1]
+    assert "pq=ADOPTION_SPIKE" in lines[1]
+    assert "acme/c" in lines[2] and "dl=200" in lines[2]
+    assert "acme/a" in lines[3] and "dl=100" in lines[3]
+
+
+def test_hf_subcommand_top_limits_rows(tmp_path):
+    """--top N caps the listing without hiding the true total."""
+    _seed_hf(
+        tmp_path,
+        [
+            ("a", "acme/a", 100, ""),
+            ("b", "acme/b", 300, ""),
+            ("c", "acme/c", 200, ""),
+        ],
+    )
+    proc = run_launcher("hf", "--top", "2", state_dir=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("[hf]")]
+    assert "total=3 shown=2" in lines[0]
+    assert len(lines) == 3  # header + the two biggest
+    assert "acme/a" not in proc.stdout  # smallest downloads stays hidden
+
+
 def test_unknown_source_is_a_usage_error(tmp_path):
     proc = run_launcher("run", "--source", "nope", state_dir=tmp_path)
     assert proc.returncode == 2
