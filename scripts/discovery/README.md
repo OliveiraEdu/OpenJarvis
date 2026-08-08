@@ -21,7 +21,8 @@ triage.py       LLM score (1-10) + category + one-line reason, strict
 decide.py       TRIGGER / DEFER / SKIP table + the --calibrate precision
                 query (D7 consumer)                    §4.7
 trigger.py      decide -> research.sh seam; slugify mirrors research.sh  §4.7
-discovery.py    CLI orchestrator: run --cycle, stats, calibrate, hf, signals §4.2
+discovery.py    CLI orchestrator: run --cycle, stats, calibrate, hf, signals,
+                timeline                                            §4.2
 discovery.sh    launcher: env injection + run-lock (one cycle at a time)
 config.toml     committed defaults, no secrets (C7)     §4.1
 ```
@@ -61,6 +62,19 @@ OJ_OFFLINE=1 ./scripts/discovery/discovery.sh run --cycle
 # hf->downloads; pricing keeps id order). No --source = one block per source.
 ./scripts/discovery/discovery.sh signals --source github --top 20
 ./scripts/discovery/discovery.sh signals --all
+
+# Timeline: chronological reference of every research artifact (signal-
+# triggered deep-dives AND on-demand subject runs), each with its signal
+# chain (first_seen -> pre_qualify -> triage -> trigger), phase windows from
+# traces.db, artifact mtimes, and outcome. FAILED runs are kept (evidence the
+# gate works); all times render local UTC-3.
+./scripts/discovery/discovery.sh timeline
+
+# Include the scheduler cycle ledger (every discovery-cycle fire, empty
+# cycles included). OJ_SCHEDULER_RUNS is opt-in (C7: no hardcoded scheduler
+# path in committed code).
+OJ_SCHEDULER_RUNS="$HOME/.config/opencode/scheduler/scopes/<scope>/runs" \
+  ./scripts/discovery/discovery.sh timeline
 ```
 
 ## Configuration
@@ -107,6 +121,9 @@ Each column of `signals.db` has a concrete reader shipped with its writer:
 4. `triage_reason` / `category` / sanitized metrics → the fixture exporter.
 5. Every `signals` row → `discovery.sh hf` and `discovery.sh signals
    --source X` (metrics decoded, sorted by the source's primary metric).
+6. Every research artifact → `discovery.sh timeline` (chronological run
+   reference: signal chain, phase windows from `traces.db`, artifact mtimes,
+   outcome — local UTC-3; scheduler cycle ledger via `OJ_SCHEDULER_RUNS`).
 
 ## Milestones
 

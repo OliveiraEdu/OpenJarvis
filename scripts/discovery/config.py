@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 import tomllib
 
@@ -116,6 +117,11 @@ class Ctx:
     workspace: Path
     root: Path
     offline: bool = False
+    # Scheduler cycle history (runs/*.jsonl), injected via OJ_SCHEDULER_RUNS.
+    # Optional on purpose (C7): the scheduler is an external system with a
+    # machine-specific layout, so committed code never hardcodes its path —
+    # the timeline consumer only reads it when the operator points at it.
+    scheduler_runs: Optional[Path] = None
 
     @classmethod
     def from_env(cls) -> "Ctx":
@@ -129,11 +135,23 @@ class Ctx:
         # OJ_OFFLINE=1 skips network collectors — air-gapped cycles and the
         # offline test harness, mirroring OJ_SKIP_SANITY in research.sh.
         offline = os.environ.get("OJ_OFFLINE", "") == "1"
-        return cls(state_dir=state_dir, workspace=workspace, root=root, offline=offline)
+        runs_env = os.environ.get("OJ_SCHEDULER_RUNS", "")
+        scheduler_runs = Path(runs_env) if runs_env else None
+        return cls(
+            state_dir=state_dir,
+            workspace=workspace,
+            root=root,
+            offline=offline,
+            scheduler_runs=scheduler_runs,
+        )
 
     @property
     def signals_db(self) -> Path:
         return self.state_dir / "signals.db"
+
+    @property
+    def traces_db(self) -> Path:
+        return self.state_dir / "traces.db"
 
 
 def load_config(path: Path | None = None) -> DiscoveryConfig:

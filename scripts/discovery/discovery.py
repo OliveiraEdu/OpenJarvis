@@ -23,8 +23,12 @@ research pipeline.
 from __future__ import annotations
 
 import argparse
+import json
+import re
+import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import collectors
@@ -377,6 +381,318 @@ def cmd_signals(
     return 0
 
 
+# -- timeline (D7 consumer, §4.7) ---------------------------------------------
+
+# Every timestamp renders in host-local time (UTC-3 on the operator box), the
+# same frame the reports use — DB timestamps are UTC ISO, traces are epoch
+# floats, scheduler runs are ISO with offset; the display normalizes all three.
+LOCAL_TZ = timezone(timedelta(hours=-3))
+
+_TOPIC_PRIMARY = re.compile(r"Topic: (.+?)\. Work this way")
+_TOPIC_FALLBACK = re.compile(r"Topic: (.+?)(?:\. |\n|$)")
+_OFFSET_FIX = re.compile(r"([+-]\d{2})(\d{2})$")
+
+_ARTIFACTS = (
+    "findings.md",
+    "numbers.md",
+    "numbers.md.tmp",
+    "report.md",
+    "report.part1",
+    "state.json",
+)
+_SKIP_DIRS = frozenset({"_research_logs", "research-corpus"})
+
+
+def _parse_iso(text: str) -> Optional[datetime]:
+    """Parse the DB/scheduler ISO timestamps (defensive: older Pythons reject
+    a colon-less ``-0300`` offset, so normalize it before fromisoformat)."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = _OFFSET_FIX.search(t)
+    if m and ":" not in m.group(0):
+        t = t[: m.start()] + m.group(1) + ":" + m.group(2)
+    try:
+        dt = datetime.fromisoformat(t)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)  # DB writes are UTC; assume so
+    return dt
+
+
+def _iso_local(text: str) -> str:
+    dt = _parse_iso(text)
+    return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M") if dt else "-"
+
+
+def _epoch_local(ts: float) -> str:
+    return datetime.fromtimestamp(ts, LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+
+
+def _clock_local(ts: float) -> str:
+    return datetime.fromtimestamp(ts, LOCAL_TZ).strftime("%H:%M:%S")
+
+
+def _trace_phase(query: str) -> str:
+    """Classify a deep-dive trace by its prompt prefix (research_phases.py
+    phase prompts; unknown prompts stay unattributed, e.g. continuation
+    echoes)."""
+    q = (query or "").upper()
+    if q.startswith("GATHER FACTS"):
+        return "gather"
+    if q.startswith("VERIFY THE NUMBERS"):
+        return "numbers"
+    if q.startswith("WRITE PART 2"):
+        return "write-2"
+    if q.startswith("WRITE PART 1"):
+        return "write-1"
+    if q.startswith("WRITE"):
+        return "write"
+    return ""
+
+
+def _trace_topic(query: str) -> str:
+    """Extract the research.sh topic from a trace prompt — the same parse the
+    fixture exporter uses (export_trace_fixtures.py)."""
+    m = _TOPIC_PRIMARY.search(query or "")
+    if m:
+        return m.group(1).strip()
+    m = _TOPIC_FALLBACK.search(query or "")
+    return m.group(1).strip() if m else ""
+
+
+def _traces_by_slug(
+    traces_db: Path,
+) -> dict[str, list[tuple[str, float, float, float]]]:
+    """traces.db -> {research_slug: [(phase, started_at, ended_at, feedback)]}.
+
+    The topic in each trace prompt slugifies to the workspace dir name — the
+    C4 contract — so a run's phase windows come straight from its traces. A
+    missing/locked DB degrades to no phase info, never an abort (D6)."""
+    if not traces_db.is_file():
+        return {}
+    by_slug: dict[str, list[tuple[str, float, float, float]]] = {}
+    try:
+        con = sqlite3.connect(str(traces_db))
+        rows = con.execute(
+            "SELECT query, started_at, ended_at, feedback FROM traces"
+        ).fetchall()
+        con.close()
+    except sqlite3.Error:
+        return {}
+    for query, started, ended, feedback in rows:
+        phase = _trace_phase(query)
+        topic = _trace_topic(query)
+        if not phase or not topic:
+            continue
+        by_slug.setdefault(trigger.slugify(topic), []).append(
+            (
+                phase,
+                float(started),
+                float(ended),
+                float(feedback) if feedback is not None else -1.0,
+            )
+        )
+    return by_slug
+
+
+def _scan_runs(workspace: Path) -> list[tuple[str, list[tuple[str, float, int]]]]:
+    """Workspace -> [(dir_name, [(artifact, mtime, size), ...])]: every run dir
+    that actually produced artifacts, infra dirs and dotdirs excluded."""
+    runs: list[tuple[str, list[tuple[str, float, int]]]] = []
+    if not workspace.is_dir():
+        return runs
+    for entry in sorted(workspace.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if entry.name in _SKIP_DIRS:
+            continue
+        artifacts = [
+            (f.name, f.stat().st_mtime, f.stat().st_size)
+            for f in sorted(entry.iterdir())
+            if f.is_file() and f.name in _ARTIFACTS
+        ]
+        if artifacts:
+            runs.append((entry.name, artifacts))
+    return runs
+
+
+def _fmt_size(n: int) -> str:
+    if n < 1024:
+        return f"{n}B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f}K"
+    return f"{n / (1024 * 1024):.1f}M"
+
+
+def _artifact_text(artifacts: list[tuple[str, float, int]]) -> str:
+    return " · ".join(
+        f"{name} {_fmt_size(size)} {_epoch_local(mtime)}"
+        for name, mtime, size in sorted(artifacts)
+    )
+
+
+def _signal_section(
+    name: str,
+    sig: store_mod.Signal,
+    artifacts: list[tuple[str, float, int]],
+    phases: list[tuple[str, float, float, float]],
+) -> list[str]:
+    lines = [f"[timeline] == {name}  kind=signal  status={sig.status}"]
+    extras = []
+    if sig.source:
+        extras.append(f"source={sig.source}")
+    if sig.title:
+        extras.append(f"title={sig.title}")
+    if sig.score is not None:
+        extras.append(f"score={sig.score}")
+    if sig.category:
+        extras.append(f"cat={sig.category}")
+    if sig.pre_qualify:
+        extras.append(f"pq={sig.pre_qualify}")
+    if extras:
+        lines.append(f"[timeline]    {' '.join(extras)}")
+    lines.append(
+        f"[timeline]    first_seen={_iso_local(sig.created_at)}"
+        f" triggered={_iso_local(sig.triggered_at)}"
+    )
+    if phases:
+        parts = []
+        for phase, started, ended, feedback in sorted(phases, key=lambda p: p[1]):
+            fb = f" fb={feedback:g}" if feedback >= 0.0 else ""
+            parts.append(f"{phase} {_clock_local(started)}->{_clock_local(ended)}{fb}")
+        lines.append(f"[timeline]    phases: {' · '.join(parts)}")
+    lines.append(f"[timeline]    artifacts: {_artifact_text(artifacts)}")
+    return lines
+
+
+def _manual_section(name: str, artifacts: list[tuple[str, float, int]]) -> list[str]:
+    return [
+        f"[timeline] == {name}  kind=manual",
+        "[timeline]    on-demand subject research (no signal linkage)",
+        f"[timeline]    artifacts: {_artifact_text(artifacts)}",
+    ]
+
+
+def _other_section(name: str, artifacts: list[tuple[str, float, int]]) -> list[str]:
+    return [
+        f"[timeline] == {name}  kind=other",
+        "[timeline]    no signal linkage (seam or manual run)",
+        f"[timeline]    artifacts: {_artifact_text(artifacts)}",
+    ]
+
+
+def _run_anchor(
+    artifacts: list[tuple[str, float, int]],
+    sig: store_mod.Signal,
+    phases: list[tuple[str, float, float, float]],
+) -> float:
+    """Chronological anchor for a run: its earliest *execution* event (phase
+    start, artifact write, trigger). first_seen deliberately excluded — a
+    signal can sit in the DB for days before its run, and the timeline must
+    read in run order, not discovery order."""
+    candidates = [mtime for _, mtime, _ in artifacts]
+    candidates += [started for _, started, _, _ in phases]
+    dt = _parse_iso(sig.triggered_at)
+    if dt:
+        candidates.append(dt.timestamp())
+    return min(candidates) if candidates else 0.0
+
+
+def _cycles_lines(runs_dir: Optional[Path]) -> list[str]:
+    """Scheduler cycle ledger: one line per discovery-cycle fire, empty cycles
+    included (they are evidence of quiet, healthy periods). Opt-in via
+    OJ_SCHEDULER_RUNS (C7) — absent, the note is honest, not an error."""
+    if runs_dir is None or not runs_dir.is_dir():
+        return [
+            "[timeline] cycle ledger: unavailable (set OJ_SCHEDULER_RUNS to the"
+            " scheduler runs dir)"
+        ]
+    events: list[tuple[str, Any]] = []
+    for f in sorted(runs_dir.glob("*discovery*.jsonl")):
+        for raw in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("startedAt"):
+                events.append((ev["startedAt"], ev.get("exitCode")))
+    if not events:
+        return [f"[timeline] cycle ledger: no discovery cycles recorded in {runs_dir}"]
+    lines = ["[timeline] -- discovery cycles (scheduler runs/*.jsonl) --"]
+    for started, code in sorted(events):
+        lines.append(f"[timeline] {_iso_local(started)}  cycle exit={code}")
+    return lines
+
+
+def cmd_timeline(ctx: config.Ctx) -> int:
+    """Chronological reference of every research artifact the engine produced
+    (D7, design §4.7): signal-triggered deep-dives AND on-demand subject runs,
+    each with its signal chain (first_seen -> pre_qualify -> triage ->
+    trigger), phase windows from traces.db, artifact mtimes, and outcome.
+    FAILED runs and empty discovery cycles are kept — they are evidence the
+    guards work. All times render in local UTC-3."""
+    with store_mod.SignalStore(ctx.signals_db) as st:
+        sigs = st.list_all()
+    by_slug: dict[str, store_mod.Signal] = {}
+    for s in sigs:
+        if s.research_slug and s.research_slug not in by_slug:
+            by_slug[s.research_slug] = s
+    phases_by_slug = _traces_by_slug(ctx.traces_db)
+    runs = _scan_runs(ctx.workspace)
+
+    print("[timeline] Trend Seeker artifact timeline (times local, UTC-3)")
+    print(f"[timeline] runs={len(runs)} signals={len(sigs)}")
+
+    sections: list[tuple[float, list[str]]] = []
+    seen = set()
+    for name, artifacts in runs:
+        seen.add(name)
+        sig = by_slug.get(name)
+        phases = phases_by_slug.get(name, [])
+        if sig is not None:
+            sections.append(
+                (
+                    _run_anchor(artifacts, sig, phases),
+                    _signal_section(name, sig, artifacts, phases),
+                )
+            )
+        elif name.startswith("subject-"):
+            sections.append(
+                (min(m for _, m, _ in artifacts), _manual_section(name, artifacts))
+            )
+        else:
+            sections.append(
+                (min(m for _, m, _ in artifacts), _other_section(name, artifacts))
+            )
+    for slug, sig in sorted(by_slug.items()):
+        if slug in seen:
+            continue
+        sections.append(
+            (
+                _run_anchor([], sig, []),
+                [
+                    f"[timeline] == {slug}  kind=signal  status={sig.status}",
+                    "[timeline]    no workspace artifacts found",
+                ],
+            )
+        )
+
+    for _anchor, lines in sorted(sections, key=lambda item: item[0]):
+        for ln in lines:
+            print(ln)
+    if not sections:
+        print(f"[timeline] no run artifacts in workspace ({ctx.workspace})")
+        print(f"[timeline] no signals with research_slug in {ctx.signals_db}")
+    for ln in _cycles_lines(ctx.scheduler_runs):
+        print(ln)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="discovery",
@@ -416,6 +732,11 @@ def main(argv: list[str] | None = None) -> int:
         "--all", action="store_true", help="show every row, not just --top"
     )
 
+    sub.add_parser(
+        "timeline",
+        help="chronological reference of every research artifact (§4.7, D7)",
+    )
+
     args = ap.parse_args(argv)
     cfg = config.load_config()
     ctx = config.Ctx.from_env()
@@ -437,6 +758,8 @@ def main(argv: list[str] | None = None) -> int:
             top=args.top,
             show_all=args.all,
         )
+    if args.cmd == "timeline":
+        return cmd_timeline(ctx)
     return 2
 
 

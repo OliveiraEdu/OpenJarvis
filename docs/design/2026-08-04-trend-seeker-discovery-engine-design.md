@@ -125,7 +125,7 @@ scripts/discovery/
                       run-lock, delegates to discovery.py (mirrors research.sh)
   discovery.py        stdlib orchestrator: collect → filter → store → triage →
                       decide → trigger; CLI:  run --cycle / run --once [--source X]
-                      / stats / calibrate / hf / signals
+                      / stats / calibrate / hf / signals / timeline
   config.toml         committed defaults: thresholds, enable flags, cadence,
                       subject template, caps (no secrets)
   config.py           typed frozen dataclasses parsing config.toml (C1); Ctx.from_env
@@ -290,7 +290,11 @@ are tuned from data, not anecdote (C6); (b) the cycle summary line (n collected
 / n triaged / n triggered / n failed / n DONE) is the discovery agent's report
 back to the scheduler task; (c) `research_slug` links each trigger to its run
 and report; (d) `triage_reason`/`category` feed the discovery fixture exporter
-(§6). No signal is written without its consumer.
+(§6); (e) every research artifact feeds the `timeline` reader — a chronological
+run reference (signal chain first_seen→trigger, phase windows from
+`traces.db`, artifact mtimes, outcome, local UTC-3; the scheduler cycle ledger
+is opt-in via `OJ_SCHEDULER_RUNS`, C7). No signal is written without its
+consumer.
 
 ### 4.8 Cadence — jarvis built-in scheduler
 
@@ -523,7 +527,7 @@ a constraint adopted because a production failure proved it necessary):
 | **D4** — one dialect per tool; contracts machine-checked | Triage JSON contract is machine-checked by a test that extracts the skeleton from `triage_prompt.txt` and validates it (§4.6, §6) — same pattern as `test_prompt_calculator_contract.py` |
 | **D5** — structure from code, content from model | Categories, thresholds, cooldowns, and the signal schema are code/committed config; the model fills score/category/reason only; `category` is coerced to a known enum |
 | **D6** — honest degrade by default | Parse failure, collection failure, and trigger failure are recorded explicitly (score 0, `FAILED` status, reason) — never silently skipped |
-| **D7** — every recorded signal has a consumer | Each column has a concrete reader shipped in the same change: `--calibrate` precision query, cycle summary line, `research_slug` linkage, exporter input (§4.7), and the read subcommands `hf` / `signals --source X` (§4.3) |
+| **D7** — every recorded signal has a consumer | Each column has a concrete reader shipped in the same change: `--calibrate` precision query, cycle summary line, `research_slug` linkage, exporter input (§4.7), and the read subcommands `hf` / `signals --source X` / `timeline` (§4.3, §4.7) |
 | **C1** — no positional-argument plumbing | `config.toml` parsed into typed frozen dataclasses mirroring `PhaseSpec`/`Ctx.from_env`; `Collector` is a typed contract; `discovery.sh` is a thin launcher (§4.1, §6) |
 | **C2** — prompts are code | `prompts/triage_prompt.txt` is a versioned template rendered via `string.Template` and stripped newline-free; the launcher carries no prompt text (§4.6) |
 | **C3** — every production failure becomes a regression test at the failing layer | `export_discovery_fixtures.py` mirrors `export_trace_fixtures.py`; live failures (collector parse, rule edge, triage drift, trigger mis-fire) are frozen at the failing layer as they occur (§6) |

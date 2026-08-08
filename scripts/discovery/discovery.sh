@@ -14,11 +14,17 @@
 #   ./scripts/discovery/discovery.sh calibrate
 #   ./scripts/discovery/discovery.sh hf --top 10
 #   ./scripts/discovery/discovery.sh signals --source github --top 20
+#   ./scripts/discovery/discovery.sh timeline
+#   # Timeline includes the scheduler cycle ledger when pointed at the runs dir:
+#   OJ_SCHEDULER_RUNS="$HOME/.config/opencode/scheduler/scopes/<scope>/runs" \
+#     ./scripts/discovery/discovery.sh timeline
 #
 # Env (same names as research.sh):
 #   OJ_STATE_DIR          signals.db + lock dir (default ~/.openjarvis)
 #   OJ_WORKSPACE_HOST     triggered deep-dive report workspace
 #                         (default ~/Git/openjarvis-workspace)
+#   OJ_SCHEDULER_RUNS     scheduler runs dir for the timeline cycle ledger
+#                         (optional; no hardcoded path in committed code, C7)
 #   OJ_SKIP_SANITY=1      skip the make jarvis-health check (offline tests)
 #
 # Exit codes: 0 done or deferred (lock held); 1 stack unreachable or phase
