@@ -532,22 +532,17 @@ def build_newsletter(date: str, runs: list[dict], workspace: Path) -> str:
         for r in flagged:
             why = "; ".join(r["clean_reasons"]) or "not clean"
             note = f" ({r['state_note']})" if r["state_note"] else ""
-            parts.append(f"- **{r['slug']}** — {why}.{note}")
-        for r in soft_notes:
-            parts.append(
-                f"- **{r['slug']}** — clean, but carries a soft provenance note "
-                f"(some source URLs were not found in the gathered findings)."
-            )
-        parts.append("")
-        for r in flagged:
-            why = "; ".join(r["clean_reasons"]) or "not clean"
-            note = f" ({r['state_note']})" if r["state_note"] else ""
             prov = (
                 " — carries a soft provenance note (some source URLs were not found in the gathered findings)"
                 if r["provenance_note"]
                 else ""
             )
             parts.append(f"- **{r['slug']}** — {why}.{note}{prov}")
+        for r in soft_notes:
+            parts.append(
+                f"- **{r['slug']}** — clean, but carries a soft provenance note "
+                f"(some source URLs were not found in the gathered findings)."
+            )
         parts.append("")
     parts.append("---")
     parts.append("")

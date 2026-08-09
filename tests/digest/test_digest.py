@@ -415,6 +415,36 @@ def test_newsletter_caveats_for_partial_no_state_and_provenance(tmp_path):
     assert "provenance note" in newsletter.lower()
 
 
+def test_newsletter_caveats_emit_each_flagged_run_once(tmp_path):
+    rows = day_rows(
+        DATE,
+        ("flagged-prov-run", "prestate-run"),
+    )
+    ws, state = setup_day(
+        tmp_path,
+        DATE,
+        rows,
+        {
+            # flagged (UNVERIFIED) AND carrying a soft provenance note — the
+            # case that used to be emitted twice: once bare, once annotated
+            "flagged-prov-run": dict(unverified=True, provenance=True),
+            "prestate-run": dict(no_state=True),
+        },
+    )
+    payload = run(
+        str(ws), str(state), DATE, "test-agent", ask=FakeDigestAsk(ws, DATE, {})
+    )
+    newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
+    caveats = newsletter.split("## Caveats", 1)[1].split("---", 1)[0]
+    for slug in ("flagged-prov-run", "prestate-run"):
+        assert caveats.count(f"**{slug}**") == 1, (
+            f"{slug} must appear exactly once in the caveats"
+        )
+    # the provenance note is attached to the flagged run's own single line
+    flagged_line = next(l for l in caveats.splitlines() if "**flagged-prov-run**" in l)
+    assert "soft provenance note" in flagged_line
+
+
 # ── the retry/gate/feedback loop (fake ask) ──────────────────────────────────
 
 
