@@ -15,16 +15,16 @@
 #   ./scripts/discovery/discovery.sh hf --top 10
 #   ./scripts/discovery/discovery.sh signals --source github --top 20
 #   ./scripts/discovery/discovery.sh timeline
-#   # Timeline includes the scheduler cycle ledger when pointed at the runs dir:
-#   OJ_SCHEDULER_RUNS="$HOME/.config/opencode/scheduler/scopes/<scope>/runs" \
-#     ./scripts/discovery/discovery.sh timeline
+#   # Timeline includes the scheduler cycle ledger automatically when the
+#   # opencode scheduler runs dir exists; OJ_SCHEDULER_RUNS overrides it.
 #
 # Env (same names as research.sh):
 #   OJ_STATE_DIR          signals.db + lock dir (default ~/.openjarvis)
 #   OJ_WORKSPACE_HOST     triggered deep-dive report workspace
 #                         (default ~/Git/openjarvis-workspace)
 #   OJ_SCHEDULER_RUNS     scheduler runs dir for the timeline cycle ledger
-#                         (optional; no hardcoded path in committed code, C7)
+#                         (default: derived from ~/.config/opencode/...; C7 —
+#                         no hardcoded path, env override for other layouts)
 #   OJ_SKIP_SANITY=1      skip the make jarvis-health check (offline tests)
 #
 # Exit codes: 0 done or deferred (lock held); 1 stack unreachable or phase
@@ -35,6 +35,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_DIR="${OJ_STATE_DIR:-$HOME/.openjarvis}"
 mkdir -p "$STATE_DIR"
+
+# ── Timeline cycle ledger default: the opencode scheduler runs dir, derived
+# by glob (the scope id varies between machines, so no literal path — C7).
+# An explicit OJ_SCHEDULER_RUNS always wins; absent scheduler state leaves it
+# unset and the timeline says so honestly instead of erroring.
+if [ -z "${OJ_SCHEDULER_RUNS:-}" ]; then
+  for _runs in "$HOME"/.config/opencode/scheduler/scopes/*/runs; do
+    if [ -d "$_runs" ]; then
+      OJ_SCHEDULER_RUNS="$_runs"
+      break
+    fi
+  done
+fi
+export OJ_SCHEDULER_RUNS
 
 # ── Run-lock: one cycle at a time. mkdir is atomic (no GNU-only flock), so a
 # concurrent cycle defers instead of double-running (D6: honest, explicit).

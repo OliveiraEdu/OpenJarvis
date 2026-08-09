@@ -70,11 +70,11 @@ OJ_OFFLINE=1 ./scripts/discovery/discovery.sh run --cycle
 # gate works); all times render local UTC-3.
 ./scripts/discovery/discovery.sh timeline
 
-# Include the scheduler cycle ledger (every discovery-cycle fire, empty
-# cycles included). OJ_SCHEDULER_RUNS is opt-in (C7: no hardcoded scheduler
-# path in committed code).
-OJ_SCHEDULER_RUNS="$HOME/.config/opencode/scheduler/scopes/<scope>/runs" \
-  ./scripts/discovery/discovery.sh timeline
+# The scheduler cycle ledger (every discovery-cycle fire, empty cycles
+# included) is included automatically when the opencode scheduler runs dir
+# exists; OJ_SCHEDULER_RUNS overrides it for other layouts (C7: the default
+# is derived by glob, never a hardcoded path).
+OJ_SCHEDULER_RUNS="/custom/path/to/runs" ./scripts/discovery/discovery.sh timeline
 ```
 
 ## Configuration
@@ -123,7 +123,8 @@ Each column of `signals.db` has a concrete reader shipped with its writer:
    --source X` (metrics decoded, sorted by the source's primary metric).
 6. Every research artifact → `discovery.sh timeline` (chronological run
    reference: signal chain, phase windows from `traces.db`, artifact mtimes,
-   outcome — local UTC-3; scheduler cycle ledger via `OJ_SCHEDULER_RUNS`).
+   outcome — local UTC-3; scheduler cycle ledger included automatically,
+   `OJ_SCHEDULER_RUNS` overrides the launcher-derived default).
 
 ## Milestones
 

@@ -234,10 +234,15 @@ def test_timeline_lists_cycle_ledger_when_runs_dir_given(tmp_path):
     assert "12:20" not in proc.stdout
 
 
-def test_timeline_honest_without_scheduler_runs(tmp_path):
-    """No OJ_SCHEDULER_RUNS -> an explicit note, not an error (C7: no
-    hardcoded scheduler path in committed code)."""
-    proc = run_launcher("timeline", state_dir=_state_dir(tmp_path))
+def test_timeline_honest_when_scheduler_runs_missing(tmp_path):
+    """An absent scheduler runs dir -> an explicit note, not an error (D6).
+    (The launcher auto-derives the opencode runs dir when it exists; pointing
+    OJ_SCHEDULER_RUNS at a nonexistent path forces the honest note.)"""
+    proc = run_launcher(
+        "timeline",
+        state_dir=_state_dir(tmp_path),
+        env_extra={"OJ_SCHEDULER_RUNS": str(tmp_path / "no-such-runs")},
+    )
     assert "cycle ledger: unavailable" in proc.stdout
 
 

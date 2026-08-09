@@ -293,7 +293,8 @@ and report; (d) `triage_reason`/`category` feed the discovery fixture exporter
 (§6); (e) every research artifact feeds the `timeline` reader — a chronological
 run reference (signal chain first_seen→trigger, phase windows from
 `traces.db`, artifact mtimes, outcome, local UTC-3; the scheduler cycle ledger
-is opt-in via `OJ_SCHEDULER_RUNS`, C7). No signal is written without its
+is launcher-derived from `~/.config/opencode/...` with an `OJ_SCHEDULER_RUNS`
+override — C7, never a hardcoded path). No signal is written without its
 consumer.
 
 ### 4.8 Cadence — jarvis built-in scheduler
