@@ -267,3 +267,4 @@ application code), verify each item:
 - [Roadmap](roadmap.md) — post-training from execution traces (the consumer for recorded signals).
 - [Trend Seeker design](../design/2026-08-04-trend-seeker-discovery-engine-design.md) — the market-signal discovery engine that builds on the pipeline and maps each standard to the design element honoring it.
 - [Trend Seeker discovery README](../../scripts/discovery/README.md) — the discovery engine's operator guide: architecture map, quick start, config reference, and offline harness. The deep-dive pipeline lives in `scripts/research.sh` (see [the research launcher header](../../scripts/research.sh)).
+- [Trend Seeker digest README](../../scripts/digest/README.md) — the daily digest stage's operator guide: the ≤500-char social post (clean runs only) and the long-form newsletter built from machine-verified artifacts, with deterministic fidelity gates.
