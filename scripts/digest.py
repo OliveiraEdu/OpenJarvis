@@ -269,10 +269,31 @@ def _figure_tokens(text: str) -> list[str]:
     return [t for t in _FIGURE_RE.findall(text) if "." in t or t.endswith("%")]
 
 
+def _figure_core(token: str) -> str:
+    """The numeric core of a figure token: one trailing '%' (unit) or one
+    leading '$' (currency) is annotation on a verbatim value — the VALUE must
+    still appear character-for-character in numbers.md. '13.066727193702121%'
+    -> '13.066727193702121'; '$201.13571874999994' -> '201.13571874999994'."""
+    if token.endswith("%"):
+        token = token[:-1]
+    if token.startswith("$"):
+        token = token[1:]
+    return token
+
+
 def numbers_fidelity(parsed: dict, numbers_text: str) -> bool:
-    """Every figure in the digest must appear verbatim in numbers.md (the
-    machine-verified artifact) — no invented, rounded, or recomputed numbers."""
-    return all(t in numbers_text for t in _figure_tokens(_all_digest_text(parsed)))
+    """Every figure in the digest must exist verbatim in numbers.md (the
+    machine-verified artifact) — no invented, rounded, or recomputed numbers.
+
+    The VALUE must appear character-for-character; a unit annotation on top
+    (one trailing '%' or one leading '$') is accepted, because the integrity
+    rule is about the number, not its unit. Rounded/reformatted values still
+    fail: '13.07%' vs the table's '13.066727193702121' has no verbatim core.
+    """
+    return all(
+        _figure_core(t) in numbers_text
+        for t in _figure_tokens(_all_digest_text(parsed))
+    )
 
 
 def sources_fidelity(parsed: dict, report_text: str) -> bool:
@@ -348,12 +369,21 @@ def digest_one(
     prompt = render_digest_prompt(
         "digest_per_run",
         {
+            "SLUG": slug,
             "TOPIC": run["topic"],
             "REPORT": f"/workspace/{slug}/report.md",
             "NUMBERS": f"/workspace/{slug}/numbers.md",
             "DIGEST_FILE": f"/workspace/digests/{date}/{slug}.digest.md",
         },
     )
+    # Slug-scoped feedback keyword: write_feedback locates the producing trace
+    # by "query like %keyword%" — with a shared keyword, a failed ask whose own
+    # trace never carried the prompt (the agent resumed a hot thread and the
+    # trace reads "Continue your assigned task") would OVERWRITE the previous
+    # run's score. Scoping to this run's slug keeps feedback on its own trace;
+    # when the prompt never arrived there is no matching trace and feedback is
+    # skipped honestly (best-effort by design).
+    feedback_keyword = f"{FB_KEYWORD} FOR {slug}"
     attempt = 1
     while True:
         print(f"[digest] {slug}: digest attempt {attempt}...")
@@ -375,7 +405,7 @@ def digest_one(
         if ok:
             print(f"[digest] {slug}: digest OK -> {path}")
             score = bash_feedback_score(attempt, size, "yes")
-            record_feedback("digest", FB_KEYWORD, score, state_dir, agent_name)
+            record_feedback("digest", feedback_keyword, score, state_dir, agent_name)
             return {
                 "digest_gate": "pass",
                 "digest_attempts": attempt,
@@ -385,7 +415,7 @@ def digest_one(
             }
         if attempt >= MAX_ATTEMPTS:
             score = bash_feedback_score(attempt, size, "no")
-            record_feedback("digest", FB_KEYWORD, score, state_dir, agent_name)
+            record_feedback("digest", feedback_keyword, score, state_dir, agent_name)
             print(
                 f"[digest] ERROR: {slug}: digest failed ({why}) after {attempt} attempts.",
                 file=sys.stderr,

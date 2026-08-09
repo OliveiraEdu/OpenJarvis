@@ -47,6 +47,7 @@ from tests.digest.helpers import (
     load_payload,
     make_signals_db,
     make_trace_state,
+    scoped_keyword,
     setup_day,
     trace_feedback,
     valid_digest,
@@ -62,6 +63,7 @@ DATE = "2026-08-08"
 def test_digest_prompt_renders_single_line_with_only_known_placeholders():
     raw = (DIGEST_PROMPTS_DIR / "digest_per_run.txt").read_text(encoding="utf-8")
     template_vars = {
+        "SLUG": "ollama-scope-ai",
         "TOPIC": "ollama",
         "REPORT": "/workspace/ollama-scope-ai/report.md",
         "NUMBERS": "/workspace/ollama-scope-ai/numbers.md",
@@ -72,7 +74,7 @@ def test_digest_prompt_renders_single_line_with_only_known_placeholders():
     # make jarvis-exec splits recipes on newlines -> a rendered prompt with an
     # internal newline breaks the live ask (same regression as the pipeline).
     assert "\n" not in rendered
-    assert "WRITE THE DAILY DIGEST ENTRY" in rendered
+    assert "WRITE THE DAILY DIGEST ENTRY FOR ollama-scope-ai" in rendered
 
 
 # ── contract parser + fidelity gates (pure, deterministic) ──────────────────
@@ -120,6 +122,25 @@ def test_numbers_fidelity_requires_verbatim_figures():
     bad = parse_digest(valid_digest("s").replace("23.69%", "99.99%"))
     assert bad is not None
     assert numbers_fidelity(bad, NUMBERS) is False
+
+
+def test_numbers_fidelity_accepts_unit_annotations_on_verbatim_values():
+    # numbers.md prints the computed result BARE (no %, no $) — the model may
+    # add one unit annotation; the VALUE must still appear verbatim.
+    numbers_text = "13.066727193702121 201.13571874999994 75.5"
+    good = (
+        "HOOK: CAGR of 13.066727193702121% and a $201.13571874999994 projection.\n"
+        "KEY_NUMBER: CAGR: 13.066727193702121\n"
+        "BULLET: Share reaches 75.5%.\n"
+        "SOURCE: https://example.com/s/one\n"
+    )
+    assert numbers_fidelity(parse_digest(good), numbers_text) is True
+    # a ROUNDED value still fails: no verbatim core in numbers.md
+    rounded = good.replace("13.066727193702121%", "13.07%")
+    assert numbers_fidelity(parse_digest(rounded), numbers_text) is False
+    # an invented value still fails
+    invented = good.replace("75.5", "99.9")
+    assert numbers_fidelity(parse_digest(invented), numbers_text) is False
 
 
 def test_sources_fidelity_requires_report_urls():
@@ -415,7 +436,9 @@ def test_digest_gate_retries_on_invented_figure_then_passes(tmp_path):
     assert entry["digest_gate"] == "pass"
     assert entry["digest_attempts"] == 2
     assert ask.calls[slug] == 2
-    assert trace_feedback(state) == pytest.approx(0.7)  # 2nd attempt, no size bonus
+    assert trace_feedback(state, scoped_keyword(slug)) == pytest.approx(
+        0.7
+    )  # 2nd attempt, no size bonus
 
 
 def test_digest_gate_fails_after_max_attempts_and_excludes_from_social(tmp_path):
@@ -441,8 +464,10 @@ def test_digest_gate_fails_after_max_attempts_and_excludes_from_social(tmp_path)
     assert good in social and bad not in social
     newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
     assert bad in newsletter
-    # low feedback recorded for the failed digest
-    assert trace_feedback(state) == pytest.approx(0.2)
+    # low feedback recorded for the failed digest (on ITS OWN slug-scoped trace)
+    assert trace_feedback(state, scoped_keyword(bad)) == pytest.approx(0.2)
+    # ...and the passing run's score is untouched on its own trace
+    assert trace_feedback(state, scoped_keyword(good)) == pytest.approx(0.8)
 
 
 def test_rerun_reuses_passed_digest_without_engine_calls(tmp_path):

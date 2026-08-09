@@ -63,8 +63,11 @@ artifacts, and `traces.db`.
     writes. A soft PROVENANCE NOTE does **not** make a run unclean (soft by
     design); it surfaces as a newsletter caveat.
 - **Feedback loop (TDL)**: each digest ask is scored (attempts + size via the
-  same `research_lib.sh` `feedback_score`) and written onto its trace with the
-  keyword `WRITE THE DAILY DIGEST ENTRY`.
+  same `research_lib.sh` `feedback_score`) and written onto its trace with a
+  **slug-scoped** keyword (`WRITE THE DAILY DIGEST ENTRY FOR <slug>`) — so the
+  score always lands on the run's own trace and can never overwrite another
+  run's (when an ask is answered as a session continuation and its trace never
+  carried the prompt, feedback is skipped honestly, best-effort by design).
 - **Scope (v1)**: signal-triggered runs only (they have a `signals.db` row
   with `research_slug` + `triggered_at`). Manual `subject-*` runs predate
   `state.json` and are excluded. The date filter converts `triggered_at`

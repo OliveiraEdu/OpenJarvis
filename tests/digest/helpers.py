@@ -15,6 +15,18 @@ import re
 import sqlite3
 from pathlib import Path
 
+# ── feedback keyword (mirrors scripts/digest.py) ─────────────────────────────
+
+FB_KEYWORD = "WRITE THE DAILY DIGEST ENTRY"
+
+
+def scoped_keyword(slug: str) -> str:
+    """The slug-scoped feedback keyword the digest writes with (and the prompt
+    carries): write_feedback locates the producing trace by this exact string,
+    so it can never land on another run's trace."""
+    return f"{FB_KEYWORD} FOR {slug}"
+
+
 # ── artifact fixtures (shape mirrors a real verified run) ────────────────────
 
 NUMBERS = (
@@ -124,9 +136,10 @@ def make_signals_db(state_dir: Path, rows: list[tuple]) -> None:
     con.close()
 
 
-def make_trace_state(state_dir: Path, keyword: str) -> None:
-    """agents.db + traces.db with one agent and one matching trace (mirrors
-    tests/pipeline/helpers.py make_state), so feedback writing is exercised."""
+def make_trace_state(state_dir: Path, keywords: list[str]) -> None:
+    """agents.db + one traces.db row per keyword (each query embeds that
+    keyword, mirroring the real ask traces), so feedback writing is exercised
+    exactly the way production locates the producing trace (slug-scoped)."""
     state_dir.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(state_dir / "agents.db")
     con.execute(
@@ -146,18 +159,26 @@ def make_trace_state(state_dir: Path, keyword: str) -> None:
         " trace_id text primary key, agent text, query text,"
         " started_at text, feedback real)"
     )
-    con.execute(
-        "insert into traces values (?,?,?,?,?)",
-        ("u-1", "u-1", f"do the work {keyword} now", "2026-08-03T00:00:00", None),
-    )
+    for i, keyword in enumerate(keywords, start=1):
+        con.execute(
+            "insert into traces values (?,?,?,?,?)",
+            (
+                f"u-{i}",
+                "u-1",
+                f"do the work {keyword} now",
+                "2026-08-03T00:00:00",
+                None,
+            ),
+        )
     con.commit()
     con.close()
 
 
-def trace_feedback(state_dir: Path, trace_id: str = "u-1") -> float | None:
+def trace_feedback(state_dir: Path, keyword: str) -> float | None:
     con = sqlite3.connect(state_dir / "traces.db")
     row = con.execute(
-        "select feedback from traces where trace_id=?", (trace_id,)
+        "select feedback from traces where query like ? order by started_at desc limit 1",
+        (f"%{keyword}%",),
     ).fetchone()
     con.close()
     return row[0] if row else None
@@ -229,7 +250,7 @@ def setup_day(
         topic = kw.pop("topic", slug)
         write_run(ws, slug, topic, **kw)
     if trace_state:
-        make_trace_state(state, "WRITE THE DAILY DIGEST ENTRY")
+        make_trace_state(state, [scoped_keyword(row[3]) for row in rows])
     return ws, state
 
 
