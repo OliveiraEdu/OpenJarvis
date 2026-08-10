@@ -1,13 +1,16 @@
 """D8/D9 — daily digest regression tests.
 
 Covers: prompt contract (single-line, known placeholders), the strict
-per-run digest contract parser, both fidelity gates (figures ⊆ numbers.md,
-URLs ⊆ report.md), deterministic clean classification, the ≤500-char budgeted
-social assembly (clean runs only), the newsletter (verbatim excerpts +
-caveats for UNVERIFIED/PARTIAL/no-state/FAILED), the retry/gate/feedback loop
-with an injected fake ask, idempotent re-runs, empty days, and the launcher
-through the bash seam. No model, no stack — the ask seam is a scripted fake
-that writes a fixture digest file, exactly like tests/pipeline does.
+per-run HOOK/NOVELTY/SPEC/SOURCE contract parser, both fidelity gates
+(figures ⊆ numbers.md ∪ report.md, URLs ⊆ report.md), deterministic clean
+classification, the ≤500-char budgeted social assembly (any completed run
+with a passing digest; UNVERIFIED/PARTIAL marked in the footer), the
+newsletter (novelty-first sections with verbatim excerpts + inline caveats +
+"Also flagged" + a machine-verified figures appendix), the retry/gate/
+feedback loop with an injected fake ask, idempotent re-runs, empty days, and
+the launcher through the bash seam. No model, no stack — the ask seam is a
+scripted fake that writes a fixture digest file, exactly like tests/pipeline
+does.
 """
 
 from __future__ import annotations
@@ -20,18 +23,18 @@ from pathlib import Path
 import pytest
 
 from digest import (
-    BULLET_MAX,
     DIGEST_PROMPTS_DIR,
     HOOK_MAX,
+    NOVELTY_MAX,
     SOCIAL_MAX,
     _figure_tokens,
     _fit,
     build_newsletter,
     build_social,
+    figure_fidelity,
     inspect_run,
     local_trigger_date,
     main,
-    numbers_fidelity,
     parse_digest,
     render_digest_prompt,
     run,
@@ -44,6 +47,7 @@ from tests.digest.helpers import (
     FakeDigestAsk,
     NUMBERS,
     day_rows,
+    fixture_report,
     load_payload,
     make_signals_db,
     make_trace_state,
@@ -84,25 +88,30 @@ def test_parse_digest_accepts_valid_contract():
     parsed = parse_digest(valid_digest("ollama-scope-ai"))
     assert parsed is not None
     assert parsed["hook"].endswith("23.69% CAGR to 2032.")
-    assert parsed["key_numbers"] == ["SLM market CAGR: 23.69% (2023-2032)"]
-    assert len(parsed["bullets"]) == 1
+    assert parsed["novelty"] == [
+        "ollama-scope-ai keeps climbing as local-first inference takes off."
+    ]
+    assert parsed["spec"] == ["The 23.69% CAGR comes verbatim from numbers.md."]
     assert parsed["sources"] == ["https://example.com/ollama-scope-ai/one"]
 
 
 def test_parse_digest_rejects_contract_violations():
     good = valid_digest("s")
     over_hook = "HOOK: " + "x" * (HOOK_MAX + 1) + "\n" + good.split("\n", 1)[1]
-    over_bullet = "HOOK: h\n" + good.split("\n", 1)[1].replace(
-        "BULLET: s keeps", "BULLET: " + "x" * (BULLET_MAX + 1)
+    over_novelty = "HOOK: h\n" + good.split("\n", 1)[1].replace(
+        "NOVELTY: s keeps", "NOVELTY: " + "x" * (NOVELTY_MAX + 1)
     )
     cases = {
         "missing hook": good.split("\n", 1)[1],
         "two hooks": "HOOK: a\n" + good,
-        "no bullets": good.replace("BULLET: ", "KEY_NUMBER: "),
-        "no key numbers": good.replace("KEY_NUMBER: ", "BULLET: "),
+        "no novelty": good.replace("NOVELTY: ", "SPEC: "),
+        "no sources": good.replace("SOURCE: ", "SPEC: "),
         "hook over budget": over_hook,
-        "bullet over budget": over_bullet,
+        "novelty over budget": over_novelty,
+        "too many novelty lines": good + "NOVELTY: extra one\nNOVELTY: extra two\n",
+        "too many spec lines": good + "SPEC: extra\nSPEC: extra\nSPEC: extra\n",
         "unknown line": good + "EXTRA: nope\n",
+        "bare url without source prefix": good.replace("SOURCE: ", ""),
         "non-url source": good.replace("https://example.com/s/one", "not-a-url"),
     }
     for name, text in cases.items():
@@ -114,33 +123,57 @@ def test_figure_tokens_skip_years_and_integers():
         "23.69%",
         "5.45",
     ]
+    # comma-grouped integers are real spec figures (context windows, params),
+    # not years — they must be grounded too
+    assert _figure_tokens("a 131,072-token window and 2.6B params") == [
+        "131,072",
+        "2.6",
+    ]
 
 
-def test_numbers_fidelity_requires_verbatim_figures():
+def test_figure_fidelity_grounds_in_numbers_or_report():
     parsed = parse_digest(valid_digest("s"))
-    assert numbers_fidelity(parsed, NUMBERS) is True
+    report = fixture_report("s", "s")
+    assert figure_fidelity(parsed, NUMBERS, report) is True
     bad = parse_digest(valid_digest("s").replace("23.69%", "99.99%"))
     assert bad is not None
-    assert numbers_fidelity(bad, NUMBERS) is False
+    assert figure_fidelity(bad, NUMBERS, report) is False
 
 
-def test_numbers_fidelity_accepts_unit_annotations_on_verbatim_values():
+def test_figure_fidelity_accepts_report_only_figures():
+    # a spec figure that lives ONLY in report.md (not numbers.md) still passes
+    # the report-grounding contract — figures need a home in either artifact.
+    report = fixture_report("s", "s")  # carries "131,072-token"
+    good = (
+        "HOOK: On-device models keep compounding: 23.69% CAGR to 2032.\n"
+        "NOVELTY: s keeps climbing as local-first inference takes off.\n"
+        "SPEC: The model ships a 131,072-token context window.\n"
+        "SOURCE: https://example.com/s/one\n"
+    )
+    assert figure_fidelity(parse_digest(good), NUMBERS, report) is True
+    # an invented spec figure still fails
+    bad = good.replace("131,072", "999,999")
+    assert figure_fidelity(parse_digest(bad), NUMBERS, report) is False
+
+
+def test_figure_fidelity_accepts_unit_annotations_on_verbatim_values():
     # numbers.md prints the computed result BARE (no %, no $) — the model may
     # add one unit annotation; the VALUE must still appear verbatim.
     numbers_text = "13.066727193702121 201.13571874999994 75.5"
+    report = fixture_report("s", "s")
     good = (
         "HOOK: CAGR of 13.066727193702121% and a $201.13571874999994 projection.\n"
-        "KEY_NUMBER: CAGR: 13.066727193702121\n"
-        "BULLET: Share reaches 75.5%.\n"
+        "NOVELTY: s keeps climbing as local-first inference takes off.\n"
+        "SPEC: Share reaches 75.5%.\n"
         "SOURCE: https://example.com/s/one\n"
     )
-    assert numbers_fidelity(parse_digest(good), numbers_text) is True
+    assert figure_fidelity(parse_digest(good), numbers_text, report) is True
     # a ROUNDED value still fails: no verbatim core in numbers.md
     rounded = good.replace("13.066727193702121%", "13.07%")
-    assert numbers_fidelity(parse_digest(rounded), numbers_text) is False
+    assert figure_fidelity(parse_digest(rounded), numbers_text, report) is False
     # an invented value still fails
     invented = good.replace("75.5", "99.9")
-    assert numbers_fidelity(parse_digest(invented), numbers_text) is False
+    assert figure_fidelity(parse_digest(invented), numbers_text, report) is False
 
 
 def test_sources_fidelity_requires_report_urls():
@@ -253,10 +286,10 @@ def test_run_selects_only_the_target_local_date(tmp_path):
     assert payload["date"] == DATE
 
 
-# ── social: clean runs only, hard budget ────────────────────────────────────
+# ── social: completed runs with a passing digest, hard budget ────────────────
 
 
-def test_social_only_clean_runs_and_stays_under_budget(tmp_path):
+def test_social_includes_completed_runs_and_marks_unverified(tmp_path):
     slugs = ("ollama-scope-ai", "comfy-org-minimax-h3-scope-ai")
     rows = day_rows(DATE, slugs) + day_rows(DATE, ("unverified-run",))
     ws, state = setup_day(
@@ -269,22 +302,24 @@ def test_social_only_clean_runs_and_stays_under_budget(tmp_path):
             "unverified-run": dict(unverified=True),
         },
     )
-    scripts = {s: [valid_digest(s)] for s in slugs}
+    scripts = {s: [valid_digest(s)] for s in (*slugs, "unverified-run")}
     payload = run(
         str(ws), str(state), DATE, "test-agent", ask=FakeDigestAsk(ws, DATE, scripts)
     )
     social = (ws / "digests" / DATE / "social.md").read_text(encoding="utf-8")
     assert payload["social"]["written"] is True
     assert len(social) <= SOCIAL_MAX
-    # clean runs only
+    # any completed run with a passing digest is shareable — clean and flagged
     assert "ollama-scope-ai keeps climbing" in social
     assert "comfy-org-minimax-h3-scope-ai keeps climbing" in social
-    assert "unverified-run" not in social
-    # hook (from the first clean run) within budget + footer present
+    assert "unverified-run keeps climbing" in social
+    # hook (from the first shareable run) within budget + X/LinkedIn footer
     hook = social.split("\n")[0]
     assert len(hook) <= HOOK_MAX
-    assert "newsletter.md" in social
-    assert "machine-verified" in social
+    assert "AI-generated · verify before acting" in social
+    assert "some figures unverified" in social  # the UNVERIFIED run is marked
+    assert "newsletter.md" not in social  # no local filesystem path in the footer
+    assert "machine-verified" not in social  # that phrasing belongs to the newsletter
 
 
 def test_social_truncates_long_bullets_to_fit_budget(tmp_path):
@@ -293,8 +328,8 @@ def test_social_truncates_long_bullets_to_fit_budget(tmp_path):
     def long_digest(slug: str) -> str:
         return (
             "HOOK: Small language models keep compounding: 23.69% CAGR to 2032.\n"
-            "KEY_NUMBER: SLM market CAGR: 23.69% (2023-2032)\n"
-            "BULLET: " + ("word " * 32).strip() + "\n"
+            "NOVELTY: " + ("word " * 32).strip() + "\n"
+            "SPEC: The 23.69% CAGR comes verbatim from numbers.md.\n"
             f"SOURCE: https://example.com/{slug}/one\n"
         )
 
@@ -322,7 +357,9 @@ def test_fit_truncates_at_word_boundary():
     assert len(_fit("abcdefghij", 3)) <= 3
 
 
-def test_social_omitted_when_nothing_clean_to_share(tmp_path):
+def test_social_omitted_when_no_digest_passes(tmp_path):
+    # both runs have reports, but neither has a passing digest (no scripts) —
+    # there is nothing shareable, so no social.md is written
     ws, state = setup_day(
         tmp_path,
         DATE,
@@ -340,7 +377,7 @@ def test_social_omitted_when_nothing_clean_to_share(tmp_path):
     assert not (ws / "digests" / DATE / "social.md").exists()
 
 
-# ── newsletter: verbatim excerpts + deterministic caveats ────────────────────
+# ── newsletter: novelty-first sections + inline caveats + appendix ───────────
 
 
 def test_newsletter_excerpts_verbatim_and_flags_cleanly(tmp_path):
@@ -370,19 +407,25 @@ def test_newsletter_excerpts_verbatim_and_flags_cleanly(tmp_path):
     )
     newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
     assert payload["newsletter"]["written"] is True
-    # completed reports get a section with the verbatim exec summary + numbers
-    # (heading: topic from source_key "ollama", slug in parens)
-    assert "## ollama (ollama-scope-ai)" in newsletter
+    lines = newsletter.splitlines()
+    # completed reports get a section (heading = topic from source_key, no
+    # slug) with the verbatim exec summary, the digest's novelty lines, and
+    # its sources
+    assert "## ollama" in lines
+    assert "## ollama (ollama-scope-ai)" not in lines  # slug moved out
     assert "ollama-scope-ai summary with a verified 23.69% CAGR." in newsletter
-    assert "| CAGR of SLM Market |" in newsletter  # numbers table verbatim
+    assert "**What's notable**" in newsletter
     assert "https://example.com/ollama-scope-ai/one" in newsletter  # digest source
-    # UNVERIFIED run flagged, FAILED run in caveats, clean status honest
+    # machine-verified numbers table lives in the appendix, not the section
+    assert "## Appendix — machine-verified figures (verbatim from numbers.md)" in lines
+    assert "| CAGR of SLM Market |" in newsletter
+    assert "### ollama (ollama-scope-ai)" in lines
+    # UNVERIFIED run flagged inline, FAILED run in "Also flagged", status honest
     assert "UNVERIFIED" in newsletter
-    assert "## Caveats" in newsletter
+    assert "**Caveats**" in newsletter
+    assert "## Also flagged" in newsletter
     assert "**failed-run**" in newsletter
     assert "signal status FAILED" in newsletter
-    # the digest bullets surface as takeaways
-    assert "**Key takeaways**" in newsletter
     # footer disclaimer
     assert "AI-generated daily digest" in newsletter
 
@@ -406,13 +449,17 @@ def test_newsletter_caveats_for_partial_no_state_and_provenance(tmp_path):
         str(ws), str(state), DATE, "test-agent", ask=FakeDigestAsk(ws, DATE, {})
     )
     newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
-    assert "**partial-run**" in newsletter
+    # headings are topic-based (source_key with '-' -> '/')
+    lines = newsletter.splitlines()
+    assert "## partial/run" in lines
     assert "PARTIAL report banner" in newsletter
-    assert "**prestate-run**" in newsletter
+    assert "## prestate/run" in lines
     assert "no state.json" in newsletter
-    assert "**soft-run**" in newsletter
+    assert "## soft/run" in lines
     # soft provenance note is a caveat but NOT an unclean flag
     assert "provenance note" in newsletter.lower()
+    # no global caveats section anymore — caveats are inline per section
+    assert "## Caveats" not in newsletter
 
 
 def test_newsletter_caveats_emit_each_flagged_run_once(tmp_path):
@@ -435,14 +482,14 @@ def test_newsletter_caveats_emit_each_flagged_run_once(tmp_path):
         str(ws), str(state), DATE, "test-agent", ask=FakeDigestAsk(ws, DATE, {})
     )
     newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
-    caveats = newsletter.split("## Caveats", 1)[1].split("---", 1)[0]
-    for slug in ("flagged-prov-run", "prestate-run"):
-        assert caveats.count(f"**{slug}**") == 1, (
-            f"{slug} must appear exactly once in the caveats"
-        )
-    # the provenance note is attached to the flagged run's own single line
-    flagged_line = next(l for l in caveats.splitlines() if "**flagged-prov-run**" in l)
-    assert "soft provenance note" in flagged_line
+    assert "## Caveats" not in newsletter
+    # the flagged run's two caveats are each emitted exactly once (never bare
+    # + annotated again), and "no state.json" shows once via the status line
+    assert newsletter.count("model-stated only") == 1
+    assert newsletter.count("soft provenance note") == 1
+    assert newsletter.count("no state.json") == 1
+    # one inline caveats list per flagged run section
+    assert newsletter.count("**Caveats**") == 2
 
 
 # ── the retry/gate/feedback loop (fake ask) ──────────────────────────────────
@@ -523,6 +570,33 @@ def test_rerun_reuses_passed_digest_without_engine_calls(tmp_path):
     assert (ws / "digests" / DATE / "newsletter.md").read_text(
         encoding="utf-8"
     ) == newsletter1
+
+
+def test_rerun_reasks_digest_that_no_longer_matches_contract(tmp_path):
+    # a digest file written under an OLDER contract (BULLET/KEY_NUMBER) with a
+    # passing state must not be silently reused: parsing it under the current
+    # contract fails, so the run is re-asked instead of dropping from social.
+    ws, state = setup_day(
+        tmp_path, DATE, day_rows(DATE, (DAY_SLUGS[0],)), {DAY_SLUGS[0]: {}}
+    )
+    slug = DAY_SLUGS[0]
+    ask1 = FakeDigestAsk(ws, DATE, {slug: [valid_digest(slug)]})
+    run(str(ws), str(state), DATE, "test-agent", ask=ask1)
+    digest_file = ws / "digests" / DATE / f"{slug}.digest.md"
+    digest_file.write_text(
+        "HOOK: h\n"
+        "KEY_NUMBER: K: 1.5\n"
+        f"BULLET: {slug} keeps climbing.\n"
+        f"SOURCE: https://example.com/{slug}/one\n",
+        encoding="utf-8",
+    )  # old-format body; the state still claims digest_gate == pass
+
+    ask2 = FakeDigestAsk(ws, DATE, {slug: [valid_digest(slug)]})
+    payload = run(str(ws), str(state), DATE, "test-agent", ask=ask2)
+    assert ask2.calls[slug] == 1  # re-asked, not trusted from state
+    assert payload["runs"][0]["digest_gate"] == "pass"
+    assert "NOVELTY: " in digest_file.read_text(encoding="utf-8")  # rewritten
+    assert (ws / "digests" / DATE / "social.md").is_file()  # run back in social
 
 
 def test_force_reruns_the_engine(tmp_path):

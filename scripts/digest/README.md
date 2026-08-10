@@ -7,17 +7,22 @@ morning it turns a calendar day's deep-dive runs (from
 artifacts under `$OJ_WORKSPACE_HOST/digests/<date>/`:
 
 ```
-digests/<date>/social.md          ≤500-char social post — ONLY clean runs
-                                  (signal DONE, all phase gates pass, no
-                                  UNVERIFIED/PARTIAL banner): hook ≤140 chars,
-                                  one bullet per clean run, footer linking to
-                                  the long version + verification caveat.
-digests/<date>/newsletter.md      long form — one section per completed report
-                                  (verbatim Executive Summary + machine-checked
-                                  numbers table + takeaways + sources) plus a
-                                  Caveats section that deterministically flags
-                                  every UNVERIFIED / PARTIAL / no-state /
-                                  FAILED run.
+digests/<date>/social.md          ≤500-char social post (X/LinkedIn) — every
+                                  completed run whose digest passed, hook
+                                  ≤140 chars + one labeled novelty bullet per
+                                  run; UNVERIFIED/PARTIAL runs are included
+                                  with an explicit footer marker ("some
+                                  figures unverified"); the footer is a real
+                                  post footer ("AI-generated · verify before
+                                  acting"), never a local filesystem path.
+digests/<date>/newsletter.md      long form, novelty-first — one section per
+                                  completed report (status, verbatim Executive
+                                  Summary, "What's notable" from the digest,
+                                  inline caveats, sources), plus an "Also
+                                  flagged" list for runs without a report and
+                                  an appendix with the machine-verified
+                                  numbers tables (clean runs only, verbatim
+                                  from numbers.md).
 digests/<date>/digest-state.json  per-run digest state (gate, attempts,
                                   feedback, fidelity, parsed content) — the
                                   idempotency ledger: a run whose digest already
@@ -52,15 +57,23 @@ artifacts, and `traces.db`.
   (reads `report.md` + `numbers.md`, writes a strict per-run digest file via
   `file_write`), then **deterministic code-side assembly** of
   `social.md` / `newsletter.md`. The model never composes the public outputs.
+- **Novelty-first contract (HOOK/NOVELTY/SPEC/SOURCE)**: the digest entry
+  captures what is genuinely *new* about the discovery (capabilities, design
+  or business decisions, specs) — market-size/CAGR projections belong in the
+  appendix, not the entry.
 - **Integrity gates mirror the pipeline (D3/D5)**:
-  - *numbers fidelity* — every figure in the digest must appear **verbatim**
-    in `numbers.md` (no invented, rounded, or recomputed numbers);
+  - *figure grounding* — every figure in the digest's claim lines
+    (HOOK/NOVELTY/SPEC) must appear **verbatim** in `numbers.md` **or**
+    `report.md` (no invented, rounded, or recomputed numbers, no made-up
+    specs); SOURCE lines are exempt because URLs are covered by sources
+    fidelity;
   - *sources fidelity* — every URL must appear in `report.md` (no invented
     citations);
   - *flagging is code-injected, never prompt-trusted* — a run whose report
-    carries a `> **UNVERIFIED**` banner or a PARTIAL REPORT note is excluded
-    from social and flagged in the newsletter, regardless of what the model
-    writes. A soft PROVENANCE NOTE does **not** make a run unclean (soft by
+    carries a `> **UNVERIFIED**` banner or a PARTIAL REPORT note is still
+    shareable (its digest can ground figures in `report.md`) but is marked in
+    the social footer ("some figures unverified") and gets inline newsletter
+    caveats. A soft PROVENANCE NOTE does **not** make a run unclean (soft by
     design); it surfaces as a newsletter caveat.
 - **Feedback loop (TDL)**: each digest ask is scored (attempts + size via the
   same `research_lib.sh` `feedback_score`) and written onto its trace with a
@@ -130,6 +143,26 @@ writes a fixture digest file; the launcher is exercised through the bash seam
    unless `--force`), and the source for the run's per-run digest content.
 4. `social.md` / `newsletter.md` → the two publishable consumers of the day's
    machine-verified research.
+
+## Open items (pending user decisions)
+
+- **Fresh-thread asks.** `jarvis agents ask` can resume the agent's hot
+  thread ("Current date: …\n\nContinue your assigned task.") instead of
+  delivering the digest prompt. Hit in the first production fire (2026-08-10
+  00:30): the 00:30 slot collides with the overnight deep-dive pipeline, so
+  all 3 attempts of `liquidai` resumed the thread mid-run. The digest handles
+  it honestly (retries, flag, feedback-skip) but the root fix is a
+  fresh-thread ask flag (no CLI flag exists today).
+- **Re-ask cooldown for permanently-unpassable digests.** A run whose
+  artifacts hold no real figures at all (placeholder `numbers.md`, figure-free
+  report) can never pass the grounding gate, yet every run re-asks it 3×.
+  Possible guard: deterministic "no real figures anywhere → skip re-ask".
+  (Report-grounding already fixed the common case: `liquidai`'s placeholder
+  table now passes via figures copied from `report.md`.)
+- **Strict-fidelity revert option.** `figure_fidelity` accepts one trailing
+  `%` / leading `$` via `_figure_core()`; strict token-verbatim (including
+  the unit) would fail most real tables that print bare computed results.
+  Reverting is a one-line change in `digest.py`.
 
 ## Operations
 

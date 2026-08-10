@@ -47,7 +47,8 @@ REPORT = (
     "## Executive Summary\n\n"
     "{summary}\n\n"
     "## Detailed Analysis\n\n"
-    "Analysis body paragraph with market context.\n\n"
+    "Analysis body paragraph with market context. The {topic} model ships a "
+    "131,072-token context window.\n\n"
     "## Conclusions\n\n"
     "Conclusion paragraph.\n\n"
     "## Sources & References\n\n"
@@ -56,6 +57,16 @@ REPORT = (
     "## Confidence Assessment\n\n"
     "High confidence.\n"
 )
+
+
+def fixture_report(slug: str, topic: str, *, summary: str | None = None) -> str:
+    """REPORT formatted the same way write_run formats it (so fidelity tests
+    can build the exact report text a run would carry)."""
+    return REPORT.format(
+        slug=slug,
+        topic=topic,
+        summary=summary or f"{topic} summary with a verified 23.69% CAGR.",
+    )
 
 
 def clean_state(slug: str, topic: str) -> dict:
@@ -186,11 +197,12 @@ def trace_feedback(state_dir: Path, keyword: str) -> float | None:
 
 def valid_digest(slug: str) -> str:
     """A digest that passes the contract + both fidelity gates for write_run's
-    artifacts: figures verbatim from NUMBERS, URL present in REPORT."""
+    artifacts: figures verbatim from NUMBERS (the 23.69% hook + spec line),
+    URL present in REPORT."""
     return (
         "HOOK: Small language models keep compounding: 23.69% CAGR to 2032.\n"
-        "KEY_NUMBER: SLM market CAGR: 23.69% (2023-2032)\n"
-        f"BULLET: {slug} keeps climbing as local-first inference takes off.\n"
+        f"NOVELTY: {slug} keeps climbing as local-first inference takes off.\n"
+        "SPEC: The 23.69% CAGR comes verbatim from numbers.md.\n"
         f"SOURCE: https://example.com/{slug}/one\n"
     )
 

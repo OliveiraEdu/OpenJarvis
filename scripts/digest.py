@@ -2,28 +2,38 @@
 
 Turns a calendar day's deep-dive runs into two ready-to-publish artifacts:
 
-  digests/<date>/social.md      ≤500-char social post — ONLY clean runs
-                                (status DONE, all phases gated, no UNVERIFIED
-                                /PARTIAL banners); hook ≤140 chars, footer with
-                                the newsletter path + verification caveat.
-  digests/<date>/newsletter.md  long form — every completed report, verbatim
-                                Executive Summary + machine-checked numbers
-                                table + takeaways + sources, plus a Caveats
-                                section that flags UNVERIFIED / PARTIAL /
-                                no-state / FAILED runs deterministically.
+  digests/<date>/social.md      ≤500-char social post (X/LinkedIn) — every
+                                completed run whose digest passed; hook ≤140
+                                chars, one labeled novelty bullet per run;
+                                UNVERIFIED/PARTIAL runs are included with an
+                                explicit footer marker, and the footer is a
+                                real post footer ("AI-generated · verify
+                                before acting"), never a local path.
+  digests/<date>/newsletter.md  long form, novelty-first — one section per
+                                completed report (status, verbatim Executive
+                                Summary, the digest's What's notable lines,
+                                inline caveats, sources), an "Also flagged"
+                                list for runs without a report, and an
+                                appendix with the machine-verified numbers
+                                tables (clean runs only, verbatim).
   digests/<date>/digest-state.json
                                 per-run digest state (gate, attempts, feedback,
                                 fidelity, parsed content) — re-runnable and
                                 idempotent: a run whose digest already passed
                                 is reused without another engine call.
 
-Design (agreed with the user, 2026-08-09):
+Design (agreed with the user, 2026-08-10):
   - Hybrid: ONE bounded engine call per completed run (reads report.md +
     numbers.md, writes a strict per-run digest file), then DETERMINISTIC
     code-side assembly — the model never composes social.md/newsletter.md.
-  - Integrity gates mirror the pipeline (D3/D5): every figure in the digest
-    must appear verbatim in numbers.md; every URL must appear in report.md;
-    UNVERIFIED/PARTIAL flagging is code-injected, never prompt-trusted.
+  - Novelty-first contract (HOOK/NOVELTY/SPEC/SOURCE): the entry captures
+    what is genuinely NEW (capabilities, design/business decisions, specs) —
+    market-size/CAGR projections belong in the appendix, not the entry.
+  - Integrity gates mirror the pipeline (D3/D5): every figure in the digest's
+    claim lines must appear verbatim in numbers.md OR report.md (report
+    grounding); every URL must appear in report.md; UNVERIFIED/PARTIAL
+    flagging is code-injected, never prompt-trusted — flagged runs stay
+    shareable but carry an explicit footer marker + inline caveats.
   - Feedback: each digest ask is scored (retries + size via the SAME
     research_lib.sh feedback_score) and written onto its trace with the
     keyword WRITE THE DAILY DIGEST ENTRY — feeding the TDL loop.
@@ -64,23 +74,23 @@ from research_phases import (
 SCRIPTS_DIR = Path(__file__).resolve().parent
 DIGEST_PROMPTS_DIR = SCRIPTS_DIR / "digest_prompts"
 
-DIGEST_SCHEMA = 1
+DIGEST_SCHEMA = 2
 FB_KEYWORD = "WRITE THE DAILY DIGEST ENTRY"
 MIN_DIGEST_SIZE = 100
 HOOK_MAX = 140
-BULLET_MAX = 200
-KEY_NUMBER_MAX = 300
+NOVELTY_MAX = 200
+SPEC_MAX = 200
 SOURCE_MAX = 300
-BULLETS_MIN = 1
-BULLETS_MAX = 3
-KEY_NUMBERS_MAX = 3
+NOVELTY_LINES_MIN = 1
+NOVELTY_LINES_MAX = 2
+SPEC_LINES_MAX = 2
 SOURCES_MAX = 3
 SOCIAL_MAX = 500
 SOCIAL_MIN_BULLET_ROOM = 20
 
 _HEADING_RE = re.compile(r"^#+\s+\S", re.M)
 _URL_RE = re.compile(r"https?://\S+")
-_FIGURE_RE = re.compile(r"\d+(?:\.\d+)?%?")
+_FIGURE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
 
 
 # ── run selection (signals.db) ───────────────────────────────────────────────
@@ -208,15 +218,15 @@ def inspect_run(workspace: Path, run: dict) -> dict:
 
 
 def parse_digest(text: str) -> dict | None:
-    """Parse a per-run digest file into {hook, key_numbers, bullets, sources}.
+    """Parse a per-run digest file into {hook, novelty, spec, sources}.
 
     The contract is strict (structure from code, D5): any unknown line,
-    a missing/over-long hook, no bullets, too many lines, or an oversized
-    line fails the parse and forces a retry.
+    a missing/over-long hook, no novelty lines, too many lines, or an
+    oversized line fails the parse and forces a retry.
     """
     hooks: list[str] = []
-    key_numbers: list[str] = []
-    bullets: list[str] = []
+    novelty: list[str] = []
+    spec: list[str] = []
     sources: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -224,25 +234,23 @@ def parse_digest(text: str) -> dict | None:
             continue
         if line.startswith("HOOK: "):
             hooks.append(line[len("HOOK: ") :].strip())
-        elif line.startswith("KEY_NUMBER: "):
-            key_numbers.append(line[len("KEY_NUMBER: ") :].strip())
-        elif line.startswith("BULLET: "):
-            bullets.append(line[len("BULLET: ") :].strip())
+        elif line.startswith("NOVELTY: "):
+            novelty.append(line[len("NOVELTY: ") :].strip())
+        elif line.startswith("SPEC: "):
+            spec.append(line[len("SPEC: ") :].strip())
         elif line.startswith("SOURCE: "):
             sources.append(line[len("SOURCE: ") :].strip())
         else:
             return None
     if len(hooks) != 1 or not hooks[0] or len(hooks[0]) > HOOK_MAX:
         return None
-    if not (BULLETS_MIN <= len(bullets) <= BULLETS_MAX):
+    if not (NOVELTY_LINES_MIN <= len(novelty) <= NOVELTY_LINES_MAX):
         return None
-    if any(len(b) > BULLET_MAX for b in bullets):
+    if any(len(n) > NOVELTY_MAX for n in novelty):
         return None
-    if len(key_numbers) > KEY_NUMBERS_MAX or len(sources) > SOURCES_MAX:
+    if len(spec) > SPEC_LINES_MAX or any(len(s) > SPEC_MAX for s in spec):
         return None
-    if not key_numbers:
-        return None
-    if any(len(k) > KEY_NUMBER_MAX for k in key_numbers):
+    if not sources or len(sources) > SOURCES_MAX:
         return None
     if any(
         len(s) > SOURCE_MAX or not s.startswith(("http://", "https://"))
@@ -251,29 +259,45 @@ def parse_digest(text: str) -> dict | None:
         return None
     return {
         "hook": hooks[0],
-        "key_numbers": key_numbers,
-        "bullets": bullets,
+        "novelty": novelty,
+        "spec": spec,
         "sources": sources,
     }
 
 
 def _all_digest_text(parsed: dict) -> str:
     return " ".join(
-        [parsed["hook"]] + parsed["key_numbers"] + parsed["bullets"] + parsed["sources"]
+        [parsed["hook"]] + parsed["novelty"] + parsed["spec"] + parsed["sources"]
     )
 
 
+def _grounding_text(parsed: dict) -> str:
+    """The digest's claim lines (hook + novelty + spec) — the text whose
+    figures must be grounded. SOURCE lines are excluded: URLs carry digits
+    and are already covered by sources_fidelity."""
+    return " ".join([parsed["hook"]] + parsed["novelty"] + parsed["spec"])
+
+
 def _figure_tokens(text: str) -> list[str]:
-    """Numeric figures (decimals or percents) — years and plain integers are
-    deliberately excluded so '2023' never gates; 23.69 / 23.69% do."""
-    return [t for t in _FIGURE_RE.findall(text) if "." in t or t.endswith("%")]
+    """Numeric figures (decimals, percents, or comma-grouped integers) —
+    bare years and plain integers are deliberately excluded so '2023' never
+    gates; 23.69, 23.69% and 131,072 all do (a comma-grouped integer is a
+    real spec figure, never a year). A prose comma glued to an integer
+    ("2032,") is stripped so it can never masquerade as a grouped figure."""
+    tokens = []
+    for t in _FIGURE_RE.findall(text):
+        t = t.rstrip(",")
+        if t and ("." in t or "," in t or t.endswith("%")):
+            tokens.append(t)
+    return tokens
 
 
 def _figure_core(token: str) -> str:
     """The numeric core of a figure token: one trailing '%' (unit) or one
     leading '$' (currency) is annotation on a verbatim value — the VALUE must
-    still appear character-for-character in numbers.md. '13.066727193702121%'
-    -> '13.066727193702121'; '$201.13571874999994' -> '201.13571874999994'."""
+    still appear character-for-character in the run's artifacts.
+    '13.066727193702121%' -> '13.066727193702121';
+    '$201.13571874999994' -> '201.13571874999994'."""
     if token.endswith("%"):
         token = token[:-1]
     if token.startswith("$"):
@@ -281,18 +305,20 @@ def _figure_core(token: str) -> str:
     return token
 
 
-def numbers_fidelity(parsed: dict, numbers_text: str) -> bool:
-    """Every figure in the digest must exist verbatim in numbers.md (the
-    machine-verified artifact) — no invented, rounded, or recomputed numbers.
+def figure_fidelity(parsed: dict, numbers_text: str, report_text: str) -> bool:
+    """Report-grounding contract: every figure in the digest's claim lines
+    must exist verbatim in numbers.md (the machine-verified artifact) or in
+    report.md (the researched artifact) — no invented, rounded, or
+    recomputed numbers, no made-up specs.
 
     The VALUE must appear character-for-character; a unit annotation on top
     (one trailing '%' or one leading '$') is accepted, because the integrity
     rule is about the number, not its unit. Rounded/reformatted values still
     fail: '13.07%' vs the table's '13.066727193702121' has no verbatim core.
     """
+    haystack = f"{numbers_text}\n{report_text}"
     return all(
-        _figure_core(t) in numbers_text
-        for t in _figure_tokens(_all_digest_text(parsed))
+        _figure_core(t) in haystack for t in _figure_tokens(_grounding_text(parsed))
     )
 
 
@@ -317,7 +343,7 @@ def validate_digest_file(path: Path, run: dict) -> tuple[bool, str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     parsed = parse_digest(text)
     if parsed is None:
-        return False, "digest does not match the HOOK/KEY_NUMBER/BULLET/SOURCE contract"
+        return False, "digest does not match the HOOK/NOVELTY/SPEC/SOURCE contract"
     try:
         report = Path(run["report_path"]).read_text(encoding="utf-8", errors="replace")
         numbers = Path(run["numbers_path"]).read_text(
@@ -325,8 +351,8 @@ def validate_digest_file(path: Path, run: dict) -> tuple[bool, str]:
         )
     except OSError:
         return False, "run artifacts unreadable"
-    if not numbers_fidelity(parsed, numbers):
-        return False, "a digest figure is not verbatim in numbers.md"
+    if not figure_fidelity(parsed, numbers, report):
+        return False, "a digest figure is not verbatim in numbers.md or report.md"
     if not sources_fidelity(parsed, report):
         return False, "a digest URL is not in report.md"
     return True, ""
@@ -465,26 +491,30 @@ def report_source_urls(report_text: str, limit: int = 3) -> list[str]:
 
 
 def build_newsletter(date: str, runs: list[dict], workspace: Path) -> str:
-    """Long form: one section per completed report (verbatim Executive Summary,
-    verbatim numbers table, takeaways, sources) + Caveats for every non-clean
-    run. The body is excerpted, never engine-synthesized."""
+    """Long form, novelty-first: one section per completed report (status,
+    verbatim Executive Summary, the digest's What's notable lines, inline
+    caveats, sources) + an 'Also flagged' list for runs without a report +
+    an appendix with the machine-verified numbers tables. The body is
+    excerpted, never engine-synthesized; the numbers live in the appendix,
+    not the headline flow."""
     parts: list[str] = [f"# AI Infrastructure Digest — {date}", ""]
     done = [r for r in runs if r["report_exists"]]
+    verified = sum(1 for r in done if r["clean"])
     parts.append(
-        f"*Daily digest of the Trend Seeker research pipeline: {len(done)} report(s) "
-        f"completed on {date}. Figures below are taken verbatim from each run's "
-        f"machine-checked numbers table; sources come from each run's report. "
-        f"AI-generated — verify before acting.*"
+        f"*What Trend Seeker surfaced on {date}: {len(done)} report(s) — "
+        f"{verified} machine-verified. AI-generated summary of machine-run "
+        f"research; figures are taken verbatim from each run's machine-checked "
+        f"numbers table (appendix) or its report. Verify before acting.*"
     )
     for r in done:
         report_text = Path(r["report_path"]).read_text(
             encoding="utf-8", errors="replace"
         )
         parts.append("")
-        parts.append(f"## {r['topic']} ({r['slug']})")
+        parts.append(f"## {r['topic']}")
         parts.append("")
         parts.append(
-            f"**Status:** "
+            "**Status:** "
             + (
                 "machine-verified (all phases gated)."
                 if r["clean"]
@@ -496,23 +526,36 @@ def build_newsletter(date: str, runs: list[dict], workspace: Path) -> str:
             report_text
         )
         parts.append(body)
-        if r["numbers_exists"]:
-            numbers_text = Path(r["numbers_path"]).read_text(
-                encoding="utf-8", errors="replace"
-            )
-            parts.append("")
-            if r["unverified"]:
-                parts.append("**Key figures** (UNVERIFIED — not machine-verified)")
-            else:
-                parts.append("**Key figures** (verbatim from numbers.md)")
-            parts.append("")
-            parts.append(numbers_text.strip())
         digest = r.get("parsed_digest")
         if digest:
             parts.append("")
-            parts.append("**Key takeaways**")
+            parts.append("**What's notable**")
             parts.append("")
-            parts.extend(f"- {b}" for b in digest["bullets"])
+            parts.extend(f"- {n}" for n in digest["novelty"])
+            parts.extend(f"- {s}" for s in digest["spec"])
+        caveats: list[str] = []
+        if r["unverified"]:
+            caveats.append(
+                "UNVERIFIED — figures are model-stated only; re-run verification "
+                "before relying on any number."
+            )
+        if r["partial"]:
+            caveats.append(
+                "PARTIAL report banner — the report could not be fully completed "
+                "within retries."
+            )
+        if r["provenance_note"]:
+            caveats.append(
+                "Carries a soft provenance note (some source URLs were not found "
+                "in the gathered findings)."
+            )
+        if digest is None and r["digest_gate"] == "fail":
+            caveats.append("Digest excerpt not produced (quality gate not satisfied).")
+        if caveats:
+            parts.append("")
+            parts.append("**Caveats**")
+            parts.append("")
+            parts.extend(f"- {c}" for c in caveats)
         sources = (
             digest["sources"]
             if digest and digest["sources"]
@@ -524,26 +567,31 @@ def build_newsletter(date: str, runs: list[dict], workspace: Path) -> str:
             parts.append("")
             parts.extend(f"- {s}" for s in sources)
         parts.append("")
-    flagged = [r for r in runs if not r["clean"]]
-    soft_notes = [r for r in runs if r["clean"] and r["provenance_note"]]
-    if flagged or soft_notes:
-        parts.append("## Caveats")
+
+    no_report = [r for r in runs if not r["report_exists"]]
+    if no_report:
+        parts.append("## Also flagged")
         parts.append("")
-        for r in flagged:
+        for r in no_report:
             why = "; ".join(r["clean_reasons"]) or "not clean"
             note = f" ({r['state_note']})" if r["state_note"] else ""
-            prov = (
-                " — carries a soft provenance note (some source URLs were not found in the gathered findings)"
-                if r["provenance_note"]
-                else ""
-            )
-            parts.append(f"- **{r['slug']}** — {why}.{note}{prov}")
-        for r in soft_notes:
-            parts.append(
-                f"- **{r['slug']}** — clean, but carries a soft provenance note "
-                f"(some source URLs were not found in the gathered findings)."
-            )
+            parts.append(f"- **{r['slug']}** — {why}.{note}")
         parts.append("")
+
+    appendix = [r for r in done if r["clean"] and r["numbers_exists"]]
+    if appendix:
+        parts.append(
+            "## Appendix — machine-verified figures (verbatim from numbers.md)"
+        )
+        parts.append("")
+        for r in appendix:
+            numbers_text = Path(r["numbers_path"]).read_text(
+                encoding="utf-8", errors="replace"
+            )
+            parts.append(f"### {r['topic']} ({r['slug']})")
+            parts.append("")
+            parts.append(numbers_text.strip())
+            parts.append("")
     parts.append("---")
     parts.append("")
     parts.append(
@@ -568,37 +616,45 @@ def _fit(text: str, limit: int) -> str:
 
 
 def build_social(date: str, runs: list[dict], workspace: Path) -> str | None:
-    """≤500-char social post from the clean runs' digests (hook from the first
-    clean run, one bullet per clean run). None when there is nothing to share
-    (no clean run with a passing digest)."""
-    clean = [r for r in runs if r["clean"] and r.get("parsed_digest")]
-    if not clean:
+    """≤500-char social post from the runs whose digest passed (hook from the
+    first shareable run, one labeled novelty line per shareable run). Any
+    completed run is shareable — UNVERIFIED/PARTIAL runs are included with an
+    explicit marker in the footer instead of being hidden. None when there is
+    nothing to share (no run with a passing digest)."""
+    shareable = [r for r in runs if r.get("parsed_digest")]
+    if not shareable:
         return None
-    footer = f"Full digest → {workspace}/digests/{date}/newsletter.md · figures machine-verified"
-    hook = clean[0]["parsed_digest"]["hook"]
-    bullets = [r["parsed_digest"]["bullets"][0] for r in clean]
+    any_flag = any(r["unverified"] or r["partial"] for r in shareable)
+    footer = "AI-generated · verify before acting" + (
+        " · some figures unverified" if any_flag else ""
+    )
+    hook = shareable[0]["parsed_digest"]["hook"]
+    items = [(r["topic"], r["parsed_digest"]["novelty"][0]) for r in shareable]
+    labels = [f"• **{topic}**: " for topic, _ in items]
 
-    def render(bullet_list: list[str], per: int) -> list[str]:
+    def render(bullets: list[str]) -> list[str]:
         out = [hook, ""]
-        out.extend(f"• {_fit(b, per)}" for b in bullet_list)
+        out.extend(labels[i] + bullets[i] for i in range(len(bullets)))
         out.extend(["", footer])
         return out
 
-    n = len(bullets)
-    parts: list[str] = []
+    n = len(items)
     while n > 0:
-        # exact budget: total = hook + footer + 4 newlines + n*2 ("• ") + Σbullets
-        per = (SOCIAL_MAX - len(hook) - len(footer) - 4 - 2 * n) // n
+        # per-bullet room: budget minus hook, footer, newlines and labels
+        per = (
+            SOCIAL_MAX
+            - len(hook)
+            - len(footer)
+            - (n + 2)  # newlines between the parts
+            - sum(len(labels[i]) for i in range(n))
+        ) // n
         if per >= SOCIAL_MIN_BULLET_ROOM:
-            candidate = "\n".join(render(bullets[:n], per))
+            bullets = [_fit(item[1], per) for item in items[:n]]
+            candidate = "\n".join(render(bullets))
             if len(candidate) <= SOCIAL_MAX:
-                parts = candidate.split("\n")
-                break
+                return candidate
         n -= 1
-        bullets = bullets[:n]
-    if not parts:
-        return None
-    return "\n".join(parts)
+    return None
 
 
 # ── orchestration ────────────────────────────────────────────────────────────
@@ -691,6 +747,31 @@ def run(
             continue
         prev_entry = prev_runs.get(r["slug"])
         if not force and prev_entry and prev_entry.get("digest_gate") == "pass":
+            digest_path = digest_dir / f"{r['slug']}.digest.md"
+            try:
+                still_valid = (
+                    parse_digest(
+                        digest_path.read_text(encoding="utf-8", errors="replace")
+                    )
+                    is not None
+                )
+            except OSError:
+                still_valid = False
+            if not still_valid:
+                # the digest file no longer satisfies the current contract
+                # (e.g. it was written under an older format) — reusing it
+                # would silently drop the run from social + What's notable,
+                # so re-ask instead.
+                print(
+                    f"[digest] {r['slug']}: prior digest no longer matches the"
+                    " contract; re-asking"
+                )
+                r.update(
+                    digest_one(
+                        r, date, digest_dir, root, agent_name, state_dir, ask=ask
+                    )
+                )
+                continue
             for key in (
                 "digest_gate",
                 "digest_attempts",
