@@ -37,6 +37,12 @@ Design (agreed with the user, 2026-08-10):
   - Feedback: each digest ask is scored (retries + size via the SAME
     research_lib.sh feedback_score) and written onto its trace with the
     keyword WRITE THE DAILY DIGEST ENTRY — feeding the TDL loop.
+  - Re-ask cooldown: when a run's artifacts carry no figure tokens at all
+    (placeholder numbers.md, figure-free report) and the digest fails the
+    figure gate, re-asking is provably futile (any figure-bearing digest can
+    never pass; the only passable figure-less form just failed) — the run
+    fails after that one attempt instead of burning MAX_ATTEMPTS. Sources
+    failures still retry normally (a URL CAN be fixed by re-asking).
   - Scope (v1): signal-triggered runs only (they have a signals.db row with
     research_slug + triggered_at). Manual subject-* runs predate state.json
     and are excluded; the date filter uses the LOCAL trigger date so the
@@ -87,6 +93,15 @@ SPEC_LINES_MAX = 2
 SOURCES_MAX = 3
 SOCIAL_MAX = 500
 SOCIAL_MIN_BULLET_ROOM = 20
+
+# Deterministic gate-failure reasons (validate_digest_file / digest_one share
+# them; the re-ask cooldown keys off the figure-gate reason).
+FIG_GATE_FAIL = "a digest figure is not verbatim in numbers.md or report.md"
+SRC_GATE_FAIL = "a digest URL is not in report.md"
+NO_FIGURES_WHY = (
+    "no real figures anywhere in numbers.md or report.md; "
+    "a figure-bearing digest can never pass grounding"
+)
 
 _HEADING_RE = re.compile(r"^#+\s+\S", re.M)
 _URL_RE = re.compile(r"https?://\S+")
@@ -322,6 +337,22 @@ def figure_fidelity(parsed: dict, numbers_text: str, report_text: str) -> bool:
     )
 
 
+def groundable_figures(numbers_text: str, report_text: str) -> list[str]:
+    """Every figure token present in the run's artifacts (numbers.md ∪
+    report.md) that a digest could ground against.
+
+    An empty list means the run holds NO real figures at all (placeholder
+    numbers.md, figure-free report): any figure-bearing digest can never pass
+    figure_fidelity (its core cannot appear verbatim anywhere), so re-asking a
+    figure-gate failure is provably futile — the only passable form is a
+    figure-less entry, which the failed attempt already showed the model does
+    not produce. Report-grounding makes the common placeholder case moot
+    (liquidai passes via figures copied from report.md); this is the safety
+    net for artifacts that carry no figures anywhere.
+    """
+    return _figure_tokens(f"{numbers_text}\n{report_text}")
+
+
 def sources_fidelity(parsed: dict, report_text: str) -> bool:
     """Every URL in the digest must appear in report.md (which carries the
     Sources & References section) — no invented citations."""
@@ -352,9 +383,9 @@ def validate_digest_file(path: Path, run: dict) -> tuple[bool, str]:
     except OSError:
         return False, "run artifacts unreadable"
     if not figure_fidelity(parsed, numbers, report):
-        return False, "a digest figure is not verbatim in numbers.md or report.md"
+        return False, FIG_GATE_FAIL
     if not sources_fidelity(parsed, report):
-        return False, "a digest URL is not in report.md"
+        return False, SRC_GATE_FAIL
     return True, ""
 
 
@@ -453,6 +484,40 @@ def digest_one(
                 "digest_bytes": size,
                 "digest_why": why,
             }
+        if why == FIG_GATE_FAIL:
+            # Re-ask cooldown: the run's artifacts carry no figure tokens at
+            # all (placeholder numbers.md, figure-free report) — any
+            # figure-bearing digest can NEVER pass the grounding gate, and
+            # the only passable form (a figure-less entry) just failed. All
+            # further re-asks are provably futile, so fail after this attempt
+            # instead of burning the full MAX_ATTEMPTS.
+            try:
+                numbers_text = Path(run["numbers_path"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                report_text = Path(run["report_path"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                numbers_text = report_text = ""
+            if not groundable_figures(numbers_text, report_text):
+                score = bash_feedback_score(attempt, size, "no")
+                record_feedback(
+                    "digest", feedback_keyword, score, state_dir, agent_name
+                )
+                print(
+                    f"[digest] {slug}: no real figures anywhere in the run's "
+                    "artifacts; a figure-bearing digest can never pass "
+                    "grounding — skipping re-ask",
+                    file=sys.stderr,
+                )
+                return {
+                    "digest_gate": "fail",
+                    "digest_attempts": attempt,
+                    "digest_feedback": score,
+                    "digest_bytes": size,
+                    "digest_why": NO_FIGURES_WHY,
+                }
         print(f"[digest] {slug}: digest gate unmet ({why}); retrying...")
         attempt += 1
 

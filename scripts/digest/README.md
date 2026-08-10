@@ -81,6 +81,16 @@ artifacts, and `traces.db`.
   score always lands on the run's own trace and can never overwrite another
   run's (when an ask is answered as a session continuation and its trace never
   carried the prompt, feedback is skipped honestly, best-effort by design).
+- **Re-ask cooldown (deterministic)**: when a run's artifacts (`numbers.md` ∪
+  `report.md`) contain no figure tokens at all and the digest fails the figure
+  gate, re-asking is provably futile — any figure-bearing digest can never
+  pass grounding, and the only passable form (a figure-less entry) just
+  failed — so the run fails after that one attempt instead of burning the
+  full `MAX_ATTEMPTS`. A figure-less digest CAN still pass on attempt 1, and
+  sources-fidelity failures still retry normally (a URL can be fixed by
+  re-asking). Report-grounding already makes the common placeholder case moot
+  (`liquidai` passes via figures copied from `report.md`); this is the safety
+  net for artifacts that carry no figures anywhere.
 - **Scope (v1)**: signal-triggered runs only (they have a `signals.db` row
   with `research_slug` + `triggered_at`). Manual `subject-*` runs predate
   `state.json` and are excluded. The date filter converts `triggered_at`
@@ -153,12 +163,6 @@ writes a fixture digest file; the launcher is exercised through the bash seam
   all 3 attempts of `liquidai` resumed the thread mid-run. The digest handles
   it honestly (retries, flag, feedback-skip) but the root fix is a
   fresh-thread ask flag (no CLI flag exists today).
-- **Re-ask cooldown for permanently-unpassable digests.** A run whose
-  artifacts hold no real figures at all (placeholder `numbers.md`, figure-free
-  report) can never pass the grounding gate, yet every run re-asks it 3×.
-  Possible guard: deterministic "no real figures anywhere → skip re-ask".
-  (Report-grounding already fixed the common case: `liquidai`'s placeholder
-  table now passes via figures copied from `report.md`.)
 - **Strict-fidelity revert option.** `figure_fidelity` accepts one trailing
   `%` / leading `$` via `_figure_core()`; strict token-verbatim (including
   the unit) would fail most real tables that print bare computed results.

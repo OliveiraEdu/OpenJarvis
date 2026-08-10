@@ -7,10 +7,13 @@ classification, the ≤500-char budgeted social assembly (any completed run
 with a passing digest; UNVERIFIED/PARTIAL marked in the footer), the
 newsletter (novelty-first sections with verbatim excerpts + inline caveats +
 "Also flagged" + a machine-verified figures appendix), the retry/gate/
-feedback loop with an injected fake ask, idempotent re-runs, empty days, and
-the launcher through the bash seam. No model, no stack — the ask seam is a
-scripted fake that writes a fixture digest file, exactly like tests/pipeline
-does.
+feedback loop with an injected fake ask (including the re-ask cooldown:
+figure-free artifacts make a figure-gate failure provably futile, so the
+run fails after one attempt while figure-less digests can still pass on
+attempt 1 and sources failures still retry), idempotent re-runs, empty
+days, and the launcher through the bash seam. No model, no stack — the ask
+seam is a scripted fake that writes a fixture digest file, exactly like
+tests/pipeline does.
 """
 
 from __future__ import annotations
@@ -26,12 +29,14 @@ from digest import (
     DIGEST_PROMPTS_DIR,
     HOOK_MAX,
     NOVELTY_MAX,
+    NO_FIGURES_WHY,
     SOCIAL_MAX,
     _figure_tokens,
     _fit,
     build_newsletter,
     build_social,
     figure_fidelity,
+    groundable_figures,
     inspect_run,
     local_trigger_date,
     main,
@@ -174,6 +179,17 @@ def test_figure_fidelity_accepts_unit_annotations_on_verbatim_values():
     # an invented value still fails
     invented = good.replace("75.5", "99.9")
     assert figure_fidelity(parse_digest(invented), numbers_text, report) is False
+
+
+def test_groundable_figures_detects_figure_free_artifacts():
+    # placeholder numbers.md ("| placeholder metric | 0 |") + a figure-free
+    # report -> NO groundable figures anywhere (bare '0' is excluded exactly
+    # like any plain integer, so it can never make a run "groundable")
+    assert groundable_figures(FIGURE_FREE_NUMBERS, FIGURE_FREE_REPORT) == []
+    assert groundable_figures("", "no digits anywhere") == []
+    # a single figure in numbers.md OR report.md makes the run groundable
+    assert groundable_figures(NUMBERS, "text") != []
+    assert groundable_figures("", "131,072-token context") == ["131,072"]
 
 
 def test_sources_fidelity_requires_report_urls():
@@ -545,6 +561,114 @@ def test_digest_gate_fails_after_max_attempts_and_excludes_from_social(tmp_path)
     assert trace_feedback(state, scoped_keyword(bad)) == pytest.approx(0.2)
     # ...and the passing run's score is untouched on its own trace
     assert trace_feedback(state, scoped_keyword(good)) == pytest.approx(0.8)
+
+
+# ── re-ask cooldown: figure-free artifacts make a figure-gate failure ────────
+# ── provably futile (any figure-bearing digest can never pass grounding) ─────
+
+FIGURE_FREE_REPORT = (
+    "# Title\n\n"
+    "## Executive Summary\n\n"
+    "A summary with no figures at all.\n\n"
+    "## Detailed Analysis\n\n"
+    "Analysis without any numeric claims.\n\n"
+    "## Sources & References\n\n"
+    "1. One - https://example.com/fig-free/one\n"
+)
+
+FIGURE_FREE_NUMBERS = (
+    "## Placeholder\n\n"
+    "| Metric | Value |\n"
+    "|--------|-------|\n"
+    "| placeholder metric | 0 |\n"
+)
+
+FIGURE_BEARING_DIGEST = (
+    "HOOK: The capability jumped 9.99% in a single release.\n"
+    "NOVELTY: This is a brand-new design decision for the platform.\n"
+    "SOURCE: https://example.com/fig-free/one\n"
+)
+
+FIGURE_FREE_DIGEST = (
+    "HOOK: Placeholder discovery with no numeric claims to verify.\n"
+    "NOVELTY: The run surfaced a capability note with no figures at all.\n"
+    "SOURCE: https://example.com/fig-free/one\n"
+)
+
+FIGURE_FREE_BAD_SOURCE = FIGURE_FREE_DIGEST.replace(
+    "https://example.com/fig-free/one", "https://example.com/not-in-report/one"
+)
+
+
+def _figure_free_run(tmp_path: Path, slug: str) -> tuple[Path, Path]:
+    """A clean run whose artifacts hold NO figure tokens at all (placeholder
+    numbers.md, figure-free report) — the re-ask cooldown case."""
+    ws, state = setup_day(
+        tmp_path,
+        DATE,
+        day_rows(DATE, (slug,)),
+        {slug: {"no_report": True, "no_numbers": True}},
+        trace_state=True,
+    )
+    d = ws / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "report.md").write_text(FIGURE_FREE_REPORT, encoding="utf-8")
+    (d / "numbers.md").write_text(FIGURE_FREE_NUMBERS, encoding="utf-8")
+    return ws, state
+
+
+def test_digest_gate_skips_reruns_when_artifacts_have_no_figures(tmp_path):
+    # attempt 1 writes a figure-bearing digest -> figure gate fails; the
+    # artifacts hold no figures at all, so re-asking is provably futile and
+    # the run fails after this ONE attempt (not the full MAX_ATTEMPTS).
+    slug = DAY_SLUGS[0]
+    ws, state = _figure_free_run(tmp_path, slug)
+    ask = FakeDigestAsk(ws, DATE, {slug: [FIGURE_BEARING_DIGEST]})
+    payload = run(str(ws), str(state), DATE, "test-agent", ask=ask)
+    entry = next(r for r in payload["runs"] if r["slug"] == slug)
+    assert entry["digest_gate"] == "fail"
+    assert entry["digest_attempts"] == 1
+    assert entry["digest_why"] == NO_FIGURES_WHY
+    assert ask.calls[slug] == 1  # no re-ask
+    assert trace_feedback(state, scoped_keyword(slug)) == pytest.approx(0.2)
+    # failed digest -> no social post at all; the report still ships in the
+    # newsletter
+    assert not (ws / "digests" / DATE / "social.md").is_file()
+    newsletter = (ws / "digests" / DATE / "newsletter.md").read_text(encoding="utf-8")
+    assert slug in newsletter
+
+
+def test_digest_gate_passes_figure_less_digest_on_first_attempt(tmp_path):
+    # a figure-less digest is the ONLY passable form for figure-free
+    # artifacts — attempt 1 can legitimately succeed; the cooldown only skips
+    # RETRIES after a figure-gate failure, it never skips the ask itself.
+    slug = DAY_SLUGS[0]
+    ws, state = _figure_free_run(tmp_path, slug)
+    ask = FakeDigestAsk(ws, DATE, {slug: [FIGURE_FREE_DIGEST]})
+    payload = run(str(ws), str(state), DATE, "test-agent", ask=ask)
+    entry = next(r for r in payload["runs"] if r["slug"] == slug)
+    assert entry["digest_gate"] == "pass"
+    assert entry["digest_attempts"] == 1
+    assert ask.calls[slug] == 1
+    social = (ws / "digests" / DATE / "social.md").read_text(encoding="utf-8")
+    assert "capability note with no figures" in social
+
+
+def test_digest_gate_still_retries_sources_failure_on_figure_free_artifacts(
+    tmp_path,
+):
+    # sources failures are NOT cooldown-eligible: a URL can be fixed by
+    # re-asking, so a figure-free run whose digest fails sources still gets
+    # the full MAX_ATTEMPTS (retries are not provably futile here).
+    slug = DAY_SLUGS[0]
+    ws, state = _figure_free_run(tmp_path, slug)
+    ask = FakeDigestAsk(ws, DATE, {slug: [FIGURE_FREE_BAD_SOURCE]})
+    payload = run(str(ws), str(state), DATE, "test-agent", ask=ask)
+    entry = next(r for r in payload["runs"] if r["slug"] == slug)
+    assert entry["digest_gate"] == "fail"
+    assert entry["digest_attempts"] == 3
+    assert entry["digest_why"] == "a digest URL is not in report.md"
+    assert ask.calls[slug] == 3
 
 
 def test_rerun_reuses_passed_digest_without_engine_calls(tmp_path):
