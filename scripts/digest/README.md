@@ -170,16 +170,15 @@ writes a fixture digest file; the launcher is exercised through the bash seam
 
 ## Operations
 
-- Wired as an opencode scheduler job + host `systemd` user timer
-  (`opencode-job-openjarvis-4f1aad65c715-trend-seeker-digest`), firing at
-  **00:30 local** for the previous local calendar day.
+- Wired as a Jarvis built-in scheduler task (design §4.8 — no OpenCode
+  scheduler plugin involved) running on the host `systemd` user unit
+  `openjarvis-scheduler.service` (see `scripts/scheduler/jarvis-host` and
+  `deploy/systemd/openjarvis-scheduler.service`), firing at **00:30 local**
+  (`30 3 * * *` UTC) for the previous local calendar day.
 - The digest holds its own run-lock (`digest.lock.d`) so two digest runs
   never contend for the single engine; discovery and the deep-dive pipeline
   are never blocked by a digest (separate locks, per §5.7 of the design doc).
-- Run state lives in the scheduler job JSON under
-  `~/.config/opencode/scheduler/scopes/openjarvis-4f1aad65c715/jobs/`
-  (`lastRunAt` / `lastRunStatus`), not the systemd journal. Trust those files
-  for health checks.
-- The timer keeps the hand-fixed single-line `OnCalendar=*-*-* HH:MM:SS`
-  form (the scheduler plugin's `* *-*-*` translation is rejected by
-  systemd 255 — see the discovery README's Operations note).
+- Run state lives in the scheduler DB (`~/.openjarvis/scheduler.db`, task
+  `28c4b81a96e742ed`, `last_run`), not in the systemd journal. Trust that for
+  health checks:
+  `OPENJARVIS_CONFIG=$HOME/.openjarvis/config.host.toml jarvis scheduler list`.

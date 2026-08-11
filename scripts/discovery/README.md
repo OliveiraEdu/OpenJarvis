@@ -129,21 +129,28 @@ Each column of `signals.db` has a concrete reader shipped with its writer:
 
 ## Milestones
 
-See design §7. M1–M8 are implemented; the cron (host `systemd` user timer,
+See design §7. M1–M8 are implemented; the cron (host `jarvis scheduler` daemon,
 00/06/12/18) runs the live cycle.
 
 ## Operations
 
-- `systemctl --user list-timers` → two user timers under
-  `opencode-job-openjarvis-4f1aad65c715-*`:
-  - `trend-seeker-discovery`: runs the live cycle at 00/06/12/18.
-  - `trend-seeker-outcome-check`: 20 min after the 12:00/18:00 cycles, snapshots
-    `signals.db` counts by status into its scheduler log (works even if the
-    engine is down, since it only reads the DB).
-- Run state lives in the scheduler job JSONs under
-  `~/.config/opencode/scheduler/scopes/openjarvis-4f1aad65c715/jobs/`
-  (`lastRunAt` / `lastRunStatus`), not in the systemd journal. Trust those files
-  for health checks.
-- Both timers were hand-fixed (2026-08-05/06): the scheduler plugin's
-  `OnCalendar=* *-*-* …` translation is rejected by systemd 255; keep the valid
-  single-line `OnCalendar=*-*-* HH,HH:MM:SS` form.
+- The cadence is owned by the **Jarvis built-in scheduler** (design §4.8), not
+  the OpenCode scheduler plugin. The host daemon runs as a systemd **user**
+  unit `openjarvis-scheduler.service` (see `scripts/scheduler/jarvis-host` and
+  `deploy/systemd/openjarvis-scheduler.service`), polling every 60s:
+  - `systemctl --user status openjarvis-scheduler` → health of the daemon.
+  - `systemctl --user journalctl -u openjarvis-scheduler -f` → daemon log.
+- Tasks are stored in `~/.openjarvis/scheduler.db` (cron, UTC):
+  - `trend-seeker-discovery`: runs the live cycle at `0 3,9,15,21 * * *` UTC
+    (00/06/12/18 local, UTC-3).
+  - `trend-seeker-outcome-check`: `20 15,21 * * *` UTC (20 min after the
+    12:00/18:00 local cycles), snapshots `signals.db` counts by status into its
+    run log (works even if the engine is down, since it only reads the DB).
+  - `trend-seeker-daily-digest`: `30 3 * * *` UTC (00:30 local) — see the
+    digest README's Operations note.
+  - List/inspect: `OPENJARVIS_CONFIG=$HOME/.openjarvis/config.host.toml
+    jarvis scheduler list`.
+- Run state lives in the scheduler DB (`~/.openjarvis/scheduler.db`, `last_run`
+  per task) and the pipeline-owned cycle ledger in
+  `~/.openjarvis/scheduler-runs/` (`*discovery*.jsonl`), not in the systemd
+  journal. Trust those for health checks.

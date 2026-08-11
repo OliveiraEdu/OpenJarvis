@@ -293,8 +293,8 @@ and report; (d) `triage_reason`/`category` feed the discovery fixture exporter
 (§6); (e) every research artifact feeds the `timeline` reader — a chronological
 run reference (signal chain first_seen→trigger, phase windows from
 `traces.db`, artifact mtimes, outcome, local UTC-3; the scheduler cycle ledger
-is launcher-derived from `~/.config/opencode/...` with an `OJ_SCHEDULER_RUNS`
-override — C7, never a hardcoded path). No signal is written without its
+is pipeline-owned (written by the launcher itself into
+`$STATE_DIR/scheduler-runs/*discovery*.jsonl` — C7, never a hardcoded path)). No signal is written without its
 consumer.
 
 ### 4.8 Cadence — jarvis built-in scheduler
@@ -308,12 +308,19 @@ shell_exec and report the number of signals triaged/triggered". This mirrors
 the `it_market_analyst` pattern (template → `jarvis agents create` → synced
 system_prompt) and keeps everything inside `jarvis`.
 
-Implementation detail to confirm during M5: the container must reach
-`scripts/discovery/` — same bind-mount question as the deep-dive seam
-(`make jarvis-exec` + `shell_exec` tool reachability). If the container cannot
-see the repo, fall back to a host-side cron task via the scheduler plugin
-(`schedule_job`) calling `discovery.sh --cycle` directly; decision recorded as
-an open item (§9).
+Implementation detail confirmed (M5, **resolved 2026-08-11**): the built-in
+scheduler runs as a **host-side daemon** — a systemd **user** unit
+(`openjarvis-scheduler.service`, see `scripts/scheduler/jarvis-host` +
+`deploy/systemd/openjarvis-scheduler.service`) launching
+`jarvis scheduler start --poll-interval 60` with
+`OPENJARVIS_CONFIG=$HOME/.openjarvis/config.host.toml` (engine on
+`localhost:8080`; the shared `config.toml` keeps its container-oriented
+`host.docker.internal` engine URL untouched). The host shell_exec reaches the
+repo directly, so the container never needs a bind-mount of
+`scripts/discovery/` (the §9 fallback is retired). Tasks are cron entries in
+`~/.openjarvis/scheduler.db` (`scheduler create --agent monitor_operative`),
+three of them, all in UTC: discovery `0 3,9,15,21 * * *`, outcome-check
+`20 15,21 * * *`, daily digest `30 3 * * *`.
 
 ## 5. Layer 2 — structured state handoff
 
@@ -441,7 +448,7 @@ hub"`) must stay green; `bash -n` on the new shell scripts.
 | M5 | Cadence + auto-trigger | **Done (2026-08-05):** trigger stage wired (Phase A, commits `155ed136`–`7a42a11a`), `trend_discovery.toml` template (`0cff67fe`), host-side cron registered **paused** (bind-mount friction resolved to the §9 host-cron fallback), live E2E: plumbing + triage seam validated, collection blocked by sandbox DNS (§10.9, later resolved), Phase C (data loop): per-repo GitHub contributor capture landed so `contributor_spike` can fire (`fdab65d0`), fixture exporter + hygiene tests + first real exported payloads (`d75e9bcb`). Remaining item — unpause + resume cron — **resolved (2026-08-05); see M8** |
 | M6 | Layer 2 | **Done (2026-08-05):** `state.json` (schema 1) written by `research_phases.py` after every phase — create + merge, replace-in-place per phase (run order preserved); statuses OK/RETRIED/GATE_FAIL (DEGRADED reserved for launcher-side degrade marking); `PhaseSpec.state_tools` narrows recorded tools (default: all distinct tools in the asklog, counted through `count_tool_calls`); feedback is computed ONCE in `run_phase` and shared by the trace write and state.json (single source of truth). Fixture: `tests/pipeline/fixtures/state/storagesys.json` reconstructed by `export_trace_fixtures.py` from the artifacts/asklogs/traces fixtures (deterministic, zero diff on re-run); `tests/pipeline/test_state_json.py` (schema + bytes/tool_counts/feedback cross-consistency) + run_phase state tests in `test_orchestration.py` |
 | M7 | Docs + calibration | **Done (2026-08-06):** `scripts/discovery/README.md` (operator guide: architecture, quick start, config, offline harness, D7 consumers), engineering-standards "related docs" pointer, roadmap note, and the `--calibrate` consumer wired (D7): pure `decide.calibrate()` + `store.decision_rows()` + `discovery.sh calibrate` CLI — per-category precision (`score ≥ threshold` → DONE rate over launched DONE+FAILED runs; pending deferred/interrupted rows reported separately; precision `None` = no evidence yet, never a bogus 0). 10 new tests (7 calibrate, 1 store, 2 bash-seam CLI) |
-| M8 | HF collector + readers + ops | **Done (2026-08-06):** `HuggingFaceCollector` landed — Hub `sort=trendingScore` API, one no-auth request per cycle, dedupe on model id, `min_trending_score` floor; metrics downloads/likes/trending_score/pipeline_tag/library_name/last_modified (author dropped at export, §10.6); wired into config (`HFSettings`), the registry, and the fixture exporter, with `hf_models.json` fixture + fake-opener tests (§4.3). Rules leg closed (D7 gap): hf signals now pre-qualify via download-delta `ADOPTION_SPIKE` (`PRIMARY_METRIC["hf"]="downloads"`, §4.4). Cron **resumed and running** — `trend-seeker-discovery` fires 00/06/12/18; first live HF collection at the 12:00 cycle on 2026-08-06 (20 models, all NEW first-sighting). Companion `trend-seeker-outcome-check` timer (12:20/18:20) snapshots `signals.db` stats after each cycle (stats-only: works with the engine down). Read subcommands (D7 readers): `hf` (tailored view) and generic `signals --source X` (any source, metrics decoded, sorted by `PRIMARY_METRIC` with an honest id-order fallback). Discovery suite: 162 passed |
+| M8 | HF collector + readers + ops | **Done (2026-08-06):** `HuggingFaceCollector` landed — Hub `sort=trendingScore` API, one no-auth request per cycle, dedupe on model id, `min_trending_score` floor; metrics downloads/likes/trending_score/pipeline_tag/library_name/last_modified (author dropped at export, §10.6); wired into config (`HFSettings`), the registry, and the fixture exporter, with `hf_models.json` fixture + fake-opener tests (§4.3). Rules leg closed (D7 gap): hf signals now pre-qualify via download-delta `ADOPTION_SPIKE` (`PRIMARY_METRIC["hf"]="downloads"`, §4.4). Cron **resumed and running** — `trend-seeker-discovery` fires 00/06/12/18; first live HF collection at the 12:00 cycle on 2026-08-06 (20 models, all NEW first-sighting). Companion `trend-seeker-outcome-check` timer (12:20/18:20) snapshots `signals.db` stats after each cycle (stats-only: works with the engine down). Read subcommands (D7 readers): `hf` (tailored view) and generic `signals --source X` (any source, metrics decoded, sorted by `PRIMARY_METRIC` with an honest id-order fallback). Discovery suite: 162 passed. **Scheduler migration (2026-08-11):** cadence moved off the OpenCode scheduler-plugin timers onto the jarvis built-in scheduler daemon (host `openjarvis-scheduler.service`, §4.8) — tasks `8c6c112858ba4aa2` (discovery), `996d980e563b4599` (outcome-check), `28c4b81a96e742ed` (digest) in `~/.openjarvis/scheduler.db`; cycle ledger now pipeline-owned (`$STATE_DIR/scheduler-runs`, §4.3). 424 cross-suite tests pass |
 
 Every milestone ships with the PR checklist from `engineering-standards.md`:
 `tests/pipeline/` + full offline suite green
@@ -457,7 +464,7 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 | Trigger floods / GPU contention | Run-lock (discovery + deep-dive share the engine), per-source cooldown, daily cap; DEFER semantics |
 | LLM triage drift (non-JSON, junk scores) | Strict JSON contract + parse-and-clamp; parse failure scores 0 (honest degrade); `(score, outcome)` pairs feed the `--calibrate` consumer shipped in the same change (D7/C6) |
 | Noise / marketing content | Rule filters + exclude lists; engagement thresholds; pre-qualify gates before the LLM is ever asked |
-| Scheduler container↔repo bind-mount friction | Fallback: host-side cron via scheduler plugin; recorded open item |
+| Scheduler container↔repo bind-mount friction | **Resolved (2026-08-11):** the jarvis built-in scheduler daemon runs on the host (`openjarvis-scheduler.service`, §4.8) — the container never needs the repo |
 | 6 GB VRAM budget | Discovery is CPU/network; triage serializes with the deep-dive via the run-lock; no new model loads |
 | Signal DB growth | Prune policy in config (`prune_after_days`), status-based index |
 
@@ -468,7 +475,7 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 | Build order | Layer 1 (discovery) then Layer 2 (state handoff) |
 | Collector breadth | v1: GitHub, HN, Reddit RSS, PyPI, static pricing-diff; **+ HuggingFace Hub (M8, 2026-08-06)**; placeholders for SEC EDGAR, Reddit OAuth, job boards, cloud marketplaces |
 | Trigger mode | Auto — threshold → `scripts/research.sh` headless |
-| Cadence | **Resolved (M5, 2026-08-05):** host-side scheduler-plugin cron (`schedule_job`) calling `discovery.sh run --cycle` directly — the container cannot see `scripts/discovery/` (repo not mounted), so the jarvis-native path is deferred; `deploy/templates/trend_discovery.toml` is registered-ready for when the mount is fixed |
+| Cadence | **Resolved (M5, 2026-08-05):** host-side scheduler-plugin cron (`schedule_job`) calling `discovery.sh run --cycle` directly — the container cannot see `scripts/discovery/` (repo not mounted), so the jarvis-native path is deferred; `deploy/templates/trend_discovery.toml` is registered-ready for when the mount is fixed. **Superseded (2026-08-11):** the plugin path (and its hand-written systemd timers) is retired — the **jarvis built-in scheduler daemon** (host `openjarvis-scheduler.service`, §4.8) owns discovery/outcome-check/digest as three cron tasks in `~/.openjarvis/scheduler.db`; the OpenCode scheduler plugin is no longer involved |
 | Deliverables | Markdown reports (existing pipeline output) |
 
 ## 10. Open items
@@ -476,16 +483,21 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
 1. Container bind-mount of `scripts/discovery/` for the scheduler-agent
    `shell_exec` path (M5). **Confirmed absent (2026-08-05):** the container
    mounts only `/workspace` (openjarvis-workspace) and the state dir; the repo
-   is not mounted. The native path stays deferred until the mount (or a lean
-   image rebuild) exists; the host-side plugin cron is the adopted fallback.
+   is not mounted. **Resolved (2026-08-11):** the jarvis built-in scheduler
+   daemon runs on the host (systemd user unit `openjarvis-scheduler.service`,
+   §4.8), where shell_exec reaches the repo directly — no bind-mount needed.
 2. GitHub token availability (rate-limit upgrade only).
 3. Reddit RSS vs OAuth JSON (v1 uses RSS; OAuth is the placeholder).
-4. Exact cron cadence — **decided (M5), resumed (2026-08-05):** 6-hourly
-   (`0 */6 * * *`), registered as the `trend-seeker-discovery` host job and
-   running (fires 00/06/12/18; the 12:00 cycle on 2026-08-06 collected the
-   first 20 HF models). A companion `trend-seeker-outcome-check` timer
-   (12:20/18:20) snapshots `signals.db` counts by status after those cycles —
-   stats-only, so it works even with the engine down. Pricing/pypi stay
+4. Exact cron cadence — **decided (M5), resumed (2026-08-05), migrated
+   (2026-08-11):** 6-hourly (`0 */6 * * *`), registered as the
+   `trend-seeker-discovery` host job and running (fires 00/06/12/18; the 12:00
+   cycle on 2026-08-06 collected the first 20 HF models). A companion
+   `trend-seeker-outcome-check` job (12:20/18:20) snapshots `signals.db` counts
+   by status after those cycles — stats-only, so it works even with the engine
+   down. Both, plus the daily digest, now run as **jarvis built-in scheduler**
+   cron tasks (`~/.openjarvis/scheduler.db`, UTC: `0 3,9,15,21 * * *` /
+   `20 15,21 * * *` / `30 3 * * *`) under the host daemon — the OpenCode
+   scheduler-plugin timers were retired 2026-08-11. Pricing/pypi stay
    longer-cooldown by rule, so a 6 h poll is safe.
 5. `state.json` retention vs. cleanup (default: keep as run record).
 6. Discovery fixture exporter sanitization rules — **decided (M5):** the
@@ -505,7 +517,9 @@ layer-2 application code and is held to the same bar as the pipeline (D1).
    A plugin update must regenerate both. The `trend-seeker-outcome-check`
    timer (added 2026-08-06) hit the same bug and got the same hand-fix
    (`OnCalendar=*-*-* 12:20:00` / `18:20:00` + hand-written job JSON running
-   `discovery.py stats`).
+   `discovery.py stats`). **Moot (2026-08-11):** the OpenCode scheduler plugin
+   and its timers are retired in favor of the jarvis built-in scheduler daemon
+   (no systemd timer translation involved).
 8. `engine_busy` in the decide stage is always `False`: `scripts/research.sh`
    has no lock file, so the §5.7 run-lock cannot be detected from the host.
 9. ~~Sandbox has no outbound DNS~~ — **resolved (2026-08-05):** the network
