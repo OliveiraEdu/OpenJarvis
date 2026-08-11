@@ -143,3 +143,53 @@ class TestDetectAgentIntent:
         system = _FakeSystem()
         orchestrator = QueryOrchestrator(system)
         assert orchestrator._detect_agent_intent("what's the weather") is None
+
+
+class TestHeadlessConfirmationForwarding:
+    """The scheduler (daemon / run-task) runs agents headlessly: interactive +
+    confirm_callback must reach the agent constructor through _run_agent —
+    the regression guard for shell_exec being blocked with 'requires
+    confirmation but no confirmation callback is available' (design §4.8)."""
+
+    def test_forwards_interactive_and_confirm_callback(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        captured: Dict[str, Any] = {}
+
+        class _CaptureAgent:
+            def __init__(self, engine, model, **kwargs):
+                captured.update(kwargs)
+                self._engine = engine
+                self._model = model
+
+            def run(self, input, context=None, **kwargs):
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    content="ok", usage={}, tool_results=[], turns=1, metadata={}
+                )
+
+        def _approve(_prompt: str) -> bool:
+            return True
+
+        entries = dict(AgentRegistry.items())
+        AgentRegistry.register_value("__capture_headless_test__", _CaptureAgent)
+        try:
+            system = _FakeSystem(engine=_FakeEngine({"content": "x"}))
+            orch = QueryOrchestrator(system)
+            result = orch.ask(
+                "hello",
+                context=False,
+                agent="__capture_headless_test__",
+                interactive=True,
+                confirm_callback=_approve,
+            )
+        finally:
+            storage = AgentRegistry._entries()
+            storage.clear()
+            for key, value in entries.items():
+                storage[key] = value
+
+        assert captured.get("interactive") is True
+        assert captured.get("confirm_callback") is _approve
+        assert result["content"] == "ok"

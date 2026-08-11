@@ -348,6 +348,25 @@ class TestExecuteTask:
         call_kwargs = mock_system.ask.call_args[1]
         assert call_kwargs["tools"] == ["calculator", "think"]
 
+    def test_execute_headless_auto_approves_sensitive_tools(self, store):
+        """The daemon runs unattended (design §4.8): system.ask must receive
+        interactive=True + an auto-approving confirm_callback so sensitive
+        tools (shell_exec) execute without a TTY."""
+        mock_system = MagicMock()
+        mock_system.ask.return_value = "ran"
+        sched = TaskScheduler(store, system=mock_system, poll_interval=1)
+
+        task = sched.create_task(
+            "run cycle", "once", "2026-01-01T00:00:00+00:00", tools="shell_exec"
+        )
+        sched._execute_task(task)
+
+        call_kwargs = mock_system.ask.call_args[1]
+        assert call_kwargs["interactive"] is True
+        cb = call_kwargs["confirm_callback"]
+        assert callable(cb)
+        assert cb("Allow execution of tool 'shell_exec' with args {...}?") is True
+
 
 # -- Start / stop lifecycle ---------------------------------------------------
 

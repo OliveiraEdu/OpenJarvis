@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from openjarvis.core.config import JarvisConfig
 from openjarvis.core.events import EventBus
@@ -142,6 +142,8 @@ class JarvisSystem:
         system_prompt: Optional[str] = None,
         operator_id: Optional[str] = None,
         prior_messages: Optional[List[Message]] = None,
+        interactive: bool = False,
+        confirm_callback: Optional[Callable[[str], bool]] = None,
     ) -> Dict[str, Any]:
         return self._get_orchestrator().ask(
             query,
@@ -153,6 +155,8 @@ class JarvisSystem:
             system_prompt=system_prompt,
             operator_id=operator_id,
             prior_messages=prior_messages,
+            interactive=interactive,
+            confirm_callback=confirm_callback,
         )
 
     def _detect_agent_intent(self, query: str) -> Optional[str]:

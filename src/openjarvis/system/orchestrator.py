@@ -30,6 +30,8 @@ class QueryOrchestrator:
         system_prompt: Optional[str] = None,
         operator_id: Optional[str] = None,
         prior_messages: Optional[List[Message]] = None,
+        interactive: bool = False,
+        confirm_callback=None,
     ) -> Dict[str, Any]:
         """Execute a query through the system and return a result dict."""
         s = self._system
@@ -77,6 +79,8 @@ class QueryOrchestrator:
                 system_prompt=system_prompt,
                 operator_id=operator_id,
                 prior_messages=prior_messages,
+                interactive=interactive,
+                confirm_callback=confirm_callback,
             )
 
         result = s.engine.generate(
@@ -120,6 +124,8 @@ class QueryOrchestrator:
         system_prompt=None,
         operator_id=None,
         prior_messages=None,
+        interactive: bool = False,
+        confirm_callback=None,
     ) -> Dict[str, Any]:
         """Run through an agent."""
         from openjarvis.agents._stubs import AgentContext
@@ -160,6 +166,12 @@ class QueryOrchestrator:
                 agent_kwargs["skill_few_shot_examples"] = examples
         if system_prompt is not None:
             agent_kwargs["system_prompt"] = system_prompt
+        # Headless callers (scheduler daemon / run-task) pass interactive +
+        # confirm_callback so sensitive tools (shell_exec) can run without a
+        # TTY; plain interactive asks leave them unset (agent defaults).
+        if interactive or confirm_callback is not None:
+            agent_kwargs["interactive"] = interactive
+            agent_kwargs["confirm_callback"] = confirm_callback
         if s.capability_policy is not None:
             agent_kwargs["capability_policy"] = s.capability_policy
         if operator_id is not None:

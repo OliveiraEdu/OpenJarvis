@@ -18,6 +18,14 @@ SCHEDULER_TASK_START = "scheduler_task_start"
 SCHEDULER_TASK_END = "scheduler_task_end"
 
 
+def _auto_approve(_prompt: str) -> bool:
+    """Headless scheduler confirmation policy (design §4.8): sensitive tools
+    (e.g. shell_exec) run unattended — the scheduled prompts only invoke the
+    repo-bound pipeline launchers, the same trust level as the opencode
+    timers this daemon replaces. There is no TTY in a daemon."""
+    return True
+
+
 @dataclass(slots=True)
 class ScheduledTask:
     """A task scheduled for future or recurring execution."""
@@ -229,6 +237,11 @@ class TaskScheduler:
                 ask_kwargs: Dict[str, Any] = {
                     "agent": task.agent,
                     "tools": tools_list if tools_list else None,
+                    # Headless daemon: no TTY to confirm sensitive tools, so
+                    # auto-approve (see _auto_approve) — scheduled prompts are
+                    # repo-bound launcher invocations.
+                    "interactive": True,
+                    "confirm_callback": _auto_approve,
                 }
                 meta = task.metadata or {}
                 if meta.get("operator_id"):

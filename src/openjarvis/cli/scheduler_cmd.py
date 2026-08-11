@@ -260,10 +260,19 @@ def scheduler_run_task(agent_name: str, dry_run: bool) -> None:
         console.print(f"Running task [cyan]{match.id}[/cyan] (agent: {match.agent})…")
 
         from openjarvis.core.config import load_config
+        from openjarvis.scheduler.scheduler import _auto_approve
         from openjarvis.system import SystemBuilder
 
         system = SystemBuilder(load_config()).build()
-        result = system.ask(match.prompt, agent=match.agent)
+        # Headless invocation (design §4.8): no TTY to confirm sensitive tools
+        # (shell_exec), so auto-approve — the task prompts only run repo-bound
+        # launchers, the same trust level as the opencode timers this replaces.
+        result = system.ask(
+            match.prompt,
+            agent=match.agent,
+            interactive=True,
+            confirm_callback=_auto_approve,
+        )
 
         # Log the run result in the scheduler store
         from datetime import datetime, timezone
