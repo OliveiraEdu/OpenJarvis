@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from typing import Optional
+
 import pytest
 
 from openjarvis.scheduler.scheduler import ScheduledTask, TaskScheduler
@@ -199,6 +201,69 @@ class TestComputeNextRun:
             id="t", prompt="p", schedule_type="unknown", schedule_value="x"
         )
         assert scheduler._compute_next_run(task) is None
+
+
+# -- cron fallback parser (no croniter) -------------------------------------
+
+
+class TestComputeNextCron:
+    def _next(self, expr: str, iso: str) -> Optional[str]:
+        now = datetime.fromisoformat(iso)
+        return TaskScheduler._compute_next_cron(expr, now)
+
+    def test_step_hours_same_day(self):
+        # "0 */6 * * *" from 16:36 → next tick 18:00 today
+        assert self._next("0 */6 * * *", "2026-08-11T16:36:00+00:00") == (
+            "2026-08-11T18:00:00+00:00"
+        )
+
+    def test_step_hours_rollover(self):
+        # from 19:01 → next tick 00:00 tomorrow (6-hourly: 0,6,12,18)
+        assert self._next("0 */6 * * *", "2026-08-11T19:01:00+00:00") == (
+            "2026-08-12T00:00:00+00:00"
+        )
+
+    def test_hour_list_same_day(self):
+        # "20 12,18 * * *" from 16:36 → next tick 18:20 today
+        assert self._next("20 12,18 * * *", "2026-08-11T16:36:00+00:00") == (
+            "2026-08-11T18:20:00+00:00"
+        )
+
+    def test_hour_list_rollover(self):
+        # from 19:00 → next tick 12:20 tomorrow
+        assert self._next("20 12,18 * * *", "2026-08-11T19:00:00+00:00") == (
+            "2026-08-12T12:20:00+00:00"
+        )
+
+    def test_minute_hour_single(self):
+        # "30 0 * * *" from 16:36 → next tick 00:30 tomorrow
+        assert self._next("30 0 * * *", "2026-08-11T16:36:00+00:00") == (
+            "2026-08-12T00:30:00+00:00"
+        )
+
+    def test_wildcard_every_minute(self):
+        # "* * * * *" from 16:36:45 → next tick 16:37:00
+        assert self._next("* * * * *", "2026-08-11T16:36:45+00:00") == (
+            "2026-08-11T16:37:00+00:00"
+        )
+
+    def test_minute_step(self):
+        # "*/15 * * * *" from 16:37 → next tick 16:45
+        assert self._next("*/15 * * * *", "2026-08-11T16:37:00+00:00") == (
+            "2026-08-11T16:45:00+00:00"
+        )
+
+    def test_invalid_field_degrades_to_one_hour(self):
+        # Unparseable fields must not crash or produce a broken hourly loop;
+        # documented degraded behavior is "+1 hour".
+        assert self._next("bogus 2 * * *", "2026-08-11T16:36:00+00:00") == (
+            "2026-08-11T17:36:00+00:00"
+        )
+
+    def test_short_expression_degrades_to_one_hour(self):
+        assert self._next("0 * *", "2026-08-11T16:36:00+00:00") == (
+            "2026-08-11T17:36:00+00:00"
+        )
 
 
 # -- _execute_task -----------------------------------------------------------

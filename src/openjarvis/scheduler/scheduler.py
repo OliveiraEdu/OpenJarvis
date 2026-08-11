@@ -305,11 +305,51 @@ class TaskScheduler:
         return None
 
     @staticmethod
+    def _parse_cron_field(field: str, lo: int, hi: int) -> Optional[tuple[int, ...]]:
+        """Parse one cron field into a sorted tuple of allowed values.
+
+        Returns ``None`` for a wildcard (``*``). Supports single values,
+        step values (``*/n``) and comma lists (``12,18``) — enough for the
+        minute/hour fallback when ``croniter`` is absent.
+
+        Raises :class:`ValueError` for anything else so callers can fall
+        back to the documented degraded behavior.
+        """
+        field = field.strip()
+        if field == "*":
+            return None
+        values: set[int] = set()
+        for part in field.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if part.startswith("*/"):
+                try:
+                    step = int(part[2:])
+                except ValueError as exc:
+                    raise ValueError(f"invalid cron step: {part!r}") from exc
+                if step <= 0:
+                    raise ValueError(f"invalid cron step: {part!r}")
+                values.update(range(lo, hi + 1, step))
+            else:
+                try:
+                    values.add(int(part))
+                except ValueError as exc:
+                    raise ValueError(f"invalid cron field: {part!r}") from exc
+        if not values:
+            raise ValueError(f"invalid cron field: {field!r}")
+        return tuple(sorted(values))
+
+    @staticmethod
     def _compute_next_cron(cron_expr: str, now: datetime) -> Optional[str]:
         """Compute the next run time from a cron expression.
 
-        Uses ``croniter`` if available, otherwise falls back to a basic
-        minute-granularity parser for simple expressions.
+        Uses ``croniter`` if available, otherwise falls back to a
+        minute-granularity parser for 5-field expressions. The fallback
+        honors minute/hour fields with wildcards, single values, steps
+        (``*/n``) and comma lists (e.g. ``0 */6 * * *``); day/month/day-of-
+        week fields are ignored, and unparseable expressions degrade to
+        "in one hour" rather than failing (documented behavior).
         """
         try:
             from croniter import croniter  # type: ignore[import-untyped]
@@ -328,20 +368,36 @@ class TaskScheduler:
             )
             return (now + timedelta(hours=1)).isoformat()
 
-        minute_part, hour_part = parts[0], parts[1]
-
         try:
-            target_minute = int(minute_part) if minute_part != "*" else now.minute
-            target_hour = int(hour_part) if hour_part != "*" else now.hour
+            minutes = TaskScheduler._parse_cron_field(parts[0], 0, 59)
+            hours = TaskScheduler._parse_cron_field(parts[1], 0, 23)
         except ValueError:
+            logger.warning(
+                "Cannot parse cron without croniter: %s",
+                cron_expr,
+            )
             return (now + timedelta(hours=1)).isoformat()
 
-        candidate = now.replace(
-            hour=target_hour, minute=target_minute, second=0, microsecond=0
+        hour_values = hours if hours is not None else range(24)
+        minute_values = minutes if minutes is not None else range(60)
+
+        # Earliest candidate strictly after *now*, scanning up to 4 days out
+        # (a task whose next tick is further out would be pathological).
+        for day_offset in range(4):
+            day = now + timedelta(days=day_offset)
+            for hour in hour_values:
+                for minute in minute_values:
+                    candidate = day.replace(
+                        hour=hour, minute=minute, second=0, microsecond=0
+                    )
+                    if candidate > now:
+                        return candidate.isoformat()
+
+        logger.warning(
+            "No future cron tick found for %s in the next 4 days; deferring 1 day",
+            cron_expr,
         )
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate.isoformat()
+        return (now + timedelta(days=1)).isoformat()
 
 
 __all__ = [
