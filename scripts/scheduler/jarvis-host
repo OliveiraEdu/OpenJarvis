@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenJarvis — host scheduler daemon launcher
+#
+# Runs the Jarvis built-in scheduler on the HOST (not inside the container),
+# per design §4.8: the daemon's agents reach the host engine (localhost:8080,
+# not the container-only host.docker.internal alias) and shell_exec the repo
+# launchers (scripts/discovery/discovery.sh, ...), which themselves drive the
+# container stack via `make jarvis-*`.
+#
+# It needs a host config that points the engine at the host while keeping the
+# shared state dir (~/.openjarvis, the same dir the container mounts):
+#   cp deploy/templates/config.host.toml.example ~/.openjarvis/config.host.toml
+#
+# Usage:
+#   scripts/scheduler/jarvis-host                 # foreground daemon (poll 60s)
+#   scripts/scheduler/jarvis-host --poll-interval 30
+#   OJ_STATE_DIR=/x OJ_HOST_CONFIG=/x/toml scripts/scheduler/jarvis-host
+#
+# Env (all optional, C7 — derived, never hardcoded):
+#   OJ_STATE_DIR      shared state dir (default ~/.openjarvis)
+#   OJ_HOST_CONFIG    host config TOML (default $OJ_STATE_DIR/config.host.toml)
+#   OJ_JARVIS_BIN     jarvis binary (default $ROOT/.venv/bin/jarvis)
+#   OJ_POLL_INTERVAL  daemon poll seconds (default 60)
+#
+# systemd (user) unit reference: deploy/systemd/openjarvis-scheduler.service
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+STATE_DIR="${OJ_STATE_DIR:-$HOME/.openjarvis}"
+HOST_CONFIG="${OJ_HOST_CONFIG:-$STATE_DIR/config.host.toml}"
+JARVIS="${OJ_JARVIS_BIN:-$ROOT/.venv/bin/jarvis}"
+POLL="${OJ_POLL_INTERVAL:-60}"
+
+if [ ! -f "$HOST_CONFIG" ]; then
+  echo "[jarvis-host] ERROR: host config not found: $HOST_CONFIG" >&2
+  echo "[jarvis-host]   Create it from the example (no secrets, mode 0600):" >&2
+  echo "[jarvis-host]   cp deploy/templates/config.host.toml.example $HOST_CONFIG" >&2
+  exit 1
+fi
+if [ ! -x "$JARVIS" ]; then
+  echo "[jarvis-host] ERROR: jarvis binary not found or not executable: $JARVIS" >&2
+  echo "[jarvis-host]   Install the venv first (uv sync or pip install -e .)" >&2
+  exit 1
+fi
+
+exec env OPENJARVIS_CONFIG="$HOST_CONFIG" \
+  "$JARVIS" scheduler start --poll-interval "$POLL"

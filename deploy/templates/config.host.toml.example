@@ -1,0 +1,35 @@
+# OpenJarvis — HOST scheduler daemon config (example).
+#
+# Copy to ~/.openjarvis/config.host.toml (mode 0600) and adjust. This file is
+# a template: the live copy is machine-private and must NOT be committed.
+#
+# Why it differs from the shared ~/.openjarvis/config.toml (design §4.8): the
+# host daemon (scripts/scheduler/jarvis-host) reaches the engine at
+# localhost:8080 — the container-only alias host.docker.internal does not
+# resolve on the host. Everything else mirrors the shared config, and the
+# state db paths default to the same ~/.openjarvis the container mounts, so
+# scheduler.db / agents.db / traces.db stay shared. No secrets here.
+
+[engine]
+default = "llamacpp"
+
+[engine.llamacpp]
+host = "http://localhost:8080"
+
+[intelligence]
+default_model = "Qwen3-8B-Q3_K_M.gguf"
+
+[agent]
+default_agent = "simple"
+
+[tools]
+enabled = ["code_interpreter", "web_search", "file_read", "shell_exec"]
+
+[server]
+cors_origins = ["*"]
+
+[security]
+profile = "personal"
+
+[scheduler]
+enabled = true

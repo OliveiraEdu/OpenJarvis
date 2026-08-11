@@ -1,0 +1,33 @@
+# OpenJarvis — host scheduler daemon (reference systemd USER unit, design §4.8).
+#
+# The jarvis built-in scheduler replaces the opencode fallback timers. It must
+# run on the HOST (not the container): its agents reach the host engine and
+# shell_exec the repo launchers, which drive the container stack themselves.
+#
+# Install (user unit — no root needed; the opencode timers were user timers):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/openjarvis-scheduler.service ~/.config/systemd/user/
+#   # adjust the WorkingDirectory/ExecStart paths to the checkout location
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now openjarvis-scheduler.service
+#
+# Verify: systemctl --user status openjarvis-scheduler
+#         journalctl --user -u openjarvis-scheduler -f
+# Cutover checklist (do not enable until the jarvis tasks are provisioned and
+# smoke-tested): pause/remove the opencode timers, then enable this unit.
+
+[Unit]
+Description=OpenJarvis host scheduler daemon (jarvis built-in)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/eduardo/Git/OpenJarvis
+ExecStart=/home/eduardo/Git/OpenJarvis/scripts/scheduler/jarvis-host
+Restart=on-failure
+RestartSec=10
+# The wrapper needs the repo tooling on PATH (make jarvis-health, docker).
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target
