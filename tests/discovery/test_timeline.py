@@ -234,10 +234,24 @@ def test_timeline_lists_cycle_ledger_when_runs_dir_given(tmp_path):
     assert "12:20" not in proc.stdout
 
 
+def test_timeline_reads_pipeline_owned_ledger_by_default(tmp_path):
+    """The launcher's default runs dir (state_dir/scheduler-runs) is the
+    pipeline-owned ledger (design §4.8): a run's own record shows up in the
+    timeline without any OJ_SCHEDULER_RUNS override."""
+    state_dir = _state_dir(tmp_path)
+    proc = run_launcher(
+        "run", "--cycle", state_dir=state_dir, env_extra={"OJ_OFFLINE": "1"}
+    )
+    assert proc.returncode == 0, proc.stderr
+    proc = run_launcher("timeline", state_dir=state_dir)
+    assert proc.returncode == 0, proc.stderr
+    assert "cycle exit=0" in proc.stdout
+
+
 def test_timeline_honest_when_scheduler_runs_missing(tmp_path):
     """An absent scheduler runs dir -> an explicit note, not an error (D6).
-    (The launcher auto-derives the opencode runs dir when it exists; pointing
-    OJ_SCHEDULER_RUNS at a nonexistent path forces the honest note.)"""
+    (The launcher defaults to the pipeline-owned state_dir/scheduler-runs;
+    pointing OJ_SCHEDULER_RUNS at a nonexistent path forces the honest note.)"""
     proc = run_launcher(
         "timeline",
         state_dir=_state_dir(tmp_path),

@@ -15,16 +15,18 @@
 #   ./scripts/discovery/discovery.sh hf --top 10
 #   ./scripts/discovery/discovery.sh signals --source github --top 20
 #   ./scripts/discovery/discovery.sh timeline
-#   # Timeline includes the scheduler cycle ledger automatically when the
-#   # opencode scheduler runs dir exists; OJ_SCHEDULER_RUNS overrides it.
+#   # Every `run` appends one line to the pipeline-owned scheduler cycle
+#   # ledger (design §4.8); `timeline` renders it. OJ_SCHEDULER_RUNS
+#   # overrides the default runs dir.
 #
 # Env (same names as research.sh):
 #   OJ_STATE_DIR          signals.db + lock dir (default ~/.openjarvis)
 #   OJ_WORKSPACE_HOST     triggered deep-dive report workspace
 #                         (default ~/Git/openjarvis-workspace)
 #   OJ_SCHEDULER_RUNS     scheduler runs dir for the timeline cycle ledger
-#                         (default: derived from ~/.config/opencode/...; C7 —
-#                         no hardcoded path, env override for other layouts)
+#                         (default: $STATE_DIR/scheduler-runs, written by this
+#                         launcher itself; C7 — no hardcoded path, env
+#                         override for other layouts)
 #   OJ_SKIP_SANITY=1      skip the make jarvis-health check (offline tests)
 #
 # Exit codes: 0 done or deferred (lock held); 1 stack unreachable or phase
@@ -36,17 +38,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_DIR="${OJ_STATE_DIR:-$HOME/.openjarvis}"
 mkdir -p "$STATE_DIR"
 
-# ── Timeline cycle ledger default: the opencode scheduler runs dir, derived
-# by glob (the scope id varies between machines, so no literal path — C7).
-# An explicit OJ_SCHEDULER_RUNS always wins; absent scheduler state leaves it
-# unset and the timeline says so honestly instead of erroring.
+# ── Timeline cycle ledger: the pipeline-owned runs dir under the state dir.
+# Every `run` below appends one JSONL line there, so the cycle history follows
+# the pipeline across schedulers (design §4.8 — no opencode dependency). An
+# explicit OJ_SCHEDULER_RUNS always wins; the dir may simply not exist yet,
+# and the timeline says so honestly instead of erroring.
 if [ -z "${OJ_SCHEDULER_RUNS:-}" ]; then
-  for _runs in "$HOME"/.config/opencode/scheduler/scopes/*/runs; do
-    if [ -d "$_runs" ]; then
-      OJ_SCHEDULER_RUNS="$_runs"
-      break
-    fi
-  done
+  OJ_SCHEDULER_RUNS="$STATE_DIR/scheduler-runs"
 fi
 export OJ_SCHEDULER_RUNS
 
@@ -60,14 +58,34 @@ fi
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 # ── Sanity: stack reachable (skippable for offline tests; the deep-dive and
-# triage need the engine, a bare collection pass does not).
+# triage need the engine, a bare collection pass does not). The started
+# timestamp is captured before the run so the ledger reflects the fire time,
+# not the (possibly much later) completion time.
+_cycle_started="$(python3 -c 'from datetime import datetime; print(datetime.now().astimezone().isoformat(timespec="seconds"))')"
+set +e
 if [ "${OJ_SKIP_SANITY:-0}" != "1" ] && ! make -C "$ROOT" jarvis-health >/dev/null 2>&1; then
   echo "[discovery] ERROR: Jarvis API not reachable on :9000. Start the stack (make boot)." >&2
-  exit 1
+  _cycle_rc=1
+else
+  # ── Delegate. Without exec the EXIT trap fires after python3 returns, which
+  # releases the run-lock; _cycle_rc captures the real exit code for the
+  # ledger below.
+  OJ_STATE_DIR="$STATE_DIR" \
+  OJ_WORKSPACE_HOST="${OJ_WORKSPACE_HOST:-$HOME/Git/openjarvis-workspace}" \
+    python3 "$ROOT/scripts/discovery/discovery.py" "$@"
+  _cycle_rc=$?
+fi
+set -e
+
+# ── Cycle ledger: one JSONL line per discovery run, in the exact shape the
+# timeline reader expects (startedAt, exitCode — design §4.8). A usage error
+# (rc=2) means no cycle was attempted, so it is not recorded; a held run-lock
+# exits before this point, so a deferred fire is never double-counted;
+# read-only subcommands (stats/timeline/...) never append.
+if [ "${1:-}" = "run" ] && [ "$_cycle_rc" -ne 2 ]; then
+  mkdir -p "$OJ_SCHEDULER_RUNS"
+  printf '{"startedAt": "%s", "exitCode": %d}\n' "$_cycle_started" "$_cycle_rc" \
+    >> "$OJ_SCHEDULER_RUNS/trend-seeker-discovery.jsonl"
 fi
 
-# ── Delegate. Without exec the EXIT trap fires after python3 returns, which
-# releases the run-lock; set -e propagates a nonzero exit code unchanged.
-OJ_STATE_DIR="$STATE_DIR" \
-OJ_WORKSPACE_HOST="${OJ_WORKSPACE_HOST:-$HOME/Git/openjarvis-workspace}" \
-  python3 "$ROOT/scripts/discovery/discovery.py" "$@"
+exit "$_cycle_rc"

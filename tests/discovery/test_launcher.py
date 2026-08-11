@@ -6,6 +6,8 @@ the pipeline harness uses — no reimplementation of the launcher logic (C4).
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 
 from helpers import DISCOVERY_DIR, LAUNCHER, run_launcher
@@ -296,3 +298,49 @@ def test_discovery_scripts_are_stdlib_only():
         for line in text.splitlines():
             if line.startswith(("import ", "from ")):
                 assert "openjarvis" not in line, f"{py.name}: {line}"
+
+
+def test_cycle_appends_to_pipeline_owned_ledger(tmp_path):
+    """Every `run` appends one JSONL line to the default runs dir under the
+    state dir (design §4.8): the pipeline owns the cycle history, not any one
+    scheduler — no opencode-derived default anymore."""
+    proc = run_launcher(
+        "run", "--cycle", state_dir=tmp_path, env_extra={"OJ_OFFLINE": "1"}
+    )
+    assert proc.returncode == 0, proc.stderr
+    ledger = tmp_path / "scheduler-runs" / "trend-seeker-discovery.jsonl"
+    assert ledger.is_file()
+    lines = ledger.read_text().splitlines()
+    assert len(lines) == 1
+    ev = json.loads(lines[0])
+    assert ev["exitCode"] == 0
+    assert "T" in ev["startedAt"]  # ISO local time with offset
+
+
+def test_failed_cycle_is_recorded_with_its_exit_code(tmp_path):
+    """A run that never reached collection (sanity down, rc=1) still gets a
+    ledger line with its real exit code — failed fires stay visible (D6)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "make").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "make").chmod(0o755)
+    proc = run_launcher(
+        "run",
+        "--cycle",
+        state_dir=tmp_path,
+        skip_sanity=False,
+        env_extra={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 1
+    ledger = tmp_path / "scheduler-runs" / "trend-seeker-discovery.jsonl"
+    assert ledger.is_file()
+    ev = json.loads(ledger.read_text().splitlines()[0])
+    assert ev["exitCode"] == 1
+
+
+def test_usage_error_does_not_pollute_the_ledger(tmp_path):
+    """A CLI usage error (rc=2) means no cycle was attempted — never append a
+    fake cycle line."""
+    proc = run_launcher("run", "--source", "nope", state_dir=tmp_path)
+    assert proc.returncode == 2
+    assert not (tmp_path / "scheduler-runs").exists()
