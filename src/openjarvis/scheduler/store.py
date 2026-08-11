@@ -49,6 +49,18 @@ VALUES (?, ?, ?, ?, ?, ?)
 """
 
 
+def _as_text(value: Any) -> str:
+    """Coerce a run-log field to text, JSON-serializing non-strings."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 class SchedulerStore:
     """SQLite CRUD store for scheduled tasks and their run logs."""
 
@@ -130,10 +142,18 @@ class SchedulerStore:
         result: str = "",
         error: str = "",
     ) -> None:
-        """Record a single execution of a task."""
+        """Record a single execution of a task.
+
+        ``result``/``error`` are stored as text: non-string values (e.g. the
+        dict returned by ``system.ask``) are JSON-serialized so SQLite never
+        sees an unbound type — a raw dict here previously raised
+        ``ProgrammingError`` and left the task forever due.
+        """
+        result_text = _as_text(result)
+        error_text = _as_text(error)
         self._conn.execute(
             _INSERT_LOG,
-            (task_id, started_at, finished_at, int(success), result, error),
+            (task_id, started_at, finished_at, int(success), result_text, error_text),
         )
         self._conn.commit()
 

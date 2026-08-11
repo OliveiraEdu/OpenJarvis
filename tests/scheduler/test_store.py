@@ -159,6 +159,25 @@ class TestRunLogs:
         logs = store.get_run_logs("t1", limit=5)
         assert len(logs) == 5
 
+    def test_log_run_dict_result_is_serialized(self, store):
+        # Regression: system.ask returns a dict; a raw dict crashed SQLite
+        # binding (ProgrammingError), which left the task forever due and
+        # made the daemon refire every poll. It must be stored as text.
+        store.save_task(_make_task())
+        store.log_run(
+            task_id="t1",
+            started_at="2026-01-01T00:00:00+00:00",
+            finished_at="2026-01-01T00:01:00+00:00",
+            success=True,
+            result={"content": "collected=48 triaged=6", "usage": {"tokens": 12}},
+            error={"detail": "oops"},
+        )
+        logs = store.get_run_logs("t1")
+        assert len(logs) == 1
+        assert logs[0]["success"] == 1
+        assert '"content": "collected=48 triaged=6"' in logs[0]["result"]
+        assert '"oops"' in logs[0]["error"]
+
     def test_get_run_logs_empty(self, store):
         logs = store.get_run_logs("nonexistent")
         assert logs == []

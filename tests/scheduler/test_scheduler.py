@@ -288,6 +288,60 @@ class TestExecuteTask:
         assert logs[0]["success"] == 1
         assert logs[0]["result"] == "result text"
 
+    def test_execute_with_dict_result_advances_next_run(self, store):
+        # Regression: system.ask returns a dict; if the run log rejects it
+        # (SQLite ProgrammingError) the task's next_run never advances, so the
+        # daemon refires a due cron task every poll. The run must persist and
+        # next_run must move past "now" so the task is no longer due.
+        from datetime import datetime, timezone
+
+        mock_system = MagicMock()
+        mock_system.ask.return_value = {
+            "content": "collected=48 triaged=6",
+            "usage": {"tokens": 12},
+        }
+        sched = TaskScheduler(store, system=mock_system, poll_interval=1)
+
+        task = sched.create_task("run cycle", "cron", "0 * * * *")
+        # Force the task to be due right now (the refire scenario).
+        d = store.get_task(task.id)
+        d["next_run"] = "2020-01-01T00:00:00+00:00"
+        store.update_task(d)
+
+        sched._execute_task(ScheduledTask.from_dict(d))
+
+        # Run log persisted the dict as JSON text.
+        logs = store.get_run_logs(task.id)
+        assert len(logs) == 1
+        assert logs[0]["success"] == 1
+        assert '"collected=48 triaged=6"' in logs[0]["result"]
+
+        # Task state advanced: last_run set, next_run in the future.
+        updated = store.get_task(task.id)
+        assert updated["last_run"] is not None
+        next_run = datetime.fromisoformat(updated["next_run"])
+        assert next_run > datetime.now(timezone.utc)
+
+        # Not due anymore → the daemon will not refire on the next poll.
+        due = store.get_due_tasks(datetime.now(timezone.utc).isoformat())
+        assert task.id not in [t["id"] for t in due]
+
+    def test_error_cooldown_skips_repeat_attempts(self, store):
+        # Hardening: if a task keeps raising (e.g. store write failure), the
+        # daemon must not refire it every poll. After the first failure the
+        # task is skipped until the cooldown elapses.
+        mock_system = MagicMock()
+        mock_system.ask.side_effect = RuntimeError("boom")
+        sched = TaskScheduler(
+            store, system=mock_system, poll_interval=1, error_cooldown=3600
+        )
+
+        task = sched.create_task("fail", "cron", "0 * * * *")
+        sched._execute_task(task)
+        sched._execute_task(task)
+
+        assert mock_system.ask.call_count == 1
+
     def test_execute_without_system(self, store):
         sched = TaskScheduler(store, poll_interval=1)
         task = sched.create_task("dry run", "once", "2026-01-01T00:00:00+00:00")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -103,11 +104,14 @@ class TaskScheduler:
         *,
         poll_interval: int = 60,
         bus: Any = None,
+        error_cooldown: int = 600,
     ) -> None:
         self._store = store
         self._system = system
         self._poll_interval = poll_interval
         self._bus = bus
+        self._error_cooldown = error_cooldown
+        self._last_error_at: Dict[str, float] = {}
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -210,7 +214,18 @@ class TaskScheduler:
             self._stop_event.wait(timeout=self._poll_interval)
 
     def _execute_task(self, task: ScheduledTask) -> None:
-        """Execute a single due task and log the result."""
+        """Execute a single due task and log the result.
+
+        A task that raised on its most recent attempt is skipped until the
+        error cooldown elapses — otherwise a persistent failure (e.g. a store
+        write error) leaves the task due forever and the daemon would refire
+        it every poll (observed 2026-08-11: 6 duplicate discovery cycles).
+        """
+        now = time.monotonic()
+        if now - self._last_error_at.get(task.id, 0.0) < self._error_cooldown:
+            logger.warning("Skipping task %s within error cooldown", task.id)
+            return
+
         started_at = _now_iso()
 
         # Publish start event
@@ -254,8 +269,10 @@ class TaskScheduler:
             else:
                 result_text = f"[dry-run] Would execute: {task.prompt}"
             success = True
+            self._last_error_at.pop(task.id, None)
         except Exception as exc:
             error_text = str(exc)
+            self._last_error_at[task.id] = time.monotonic()
             logger.error("Task %s failed: %s", task.id, exc)
 
         finished_at = _now_iso()
