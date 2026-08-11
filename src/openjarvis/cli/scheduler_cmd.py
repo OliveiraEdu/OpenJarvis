@@ -307,9 +307,15 @@ def scheduler_start(poll_interval: int) -> None:
     console = Console()
     store = _get_store()
 
+    from openjarvis.core.config import load_config
     from openjarvis.scheduler.scheduler import TaskScheduler
+    from openjarvis.system import SystemBuilder
 
-    sched = TaskScheduler(store, poll_interval=poll_interval)
+    # A real JarvisSystem is required for actual execution — without it
+    # ``_execute_task`` only logs a dry-run placeholder and the daemon never
+    # runs anything (the scheduler is useless as a pure no-op).
+    system = SystemBuilder(load_config()).build()
+    sched = TaskScheduler(store, system=system, poll_interval=poll_interval)
     sched.start()
     console.print(
         f"[green]Scheduler running (poll every {poll_interval}s). "
